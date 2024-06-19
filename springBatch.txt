@@ -282,3 +282,101 @@ public class CsvToDatabaseJob {
 Run the application. You should see logs indicating that the job has started and finished. Check your Oracle database to ensure that the data from the CSV file has been inserted into the `Person` table.
 
 This setup covers the basics of reading a CSV file and writing its contents to an Oracle database using Spring Batch. You can expand and customize this setup based on your specific requirements.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+package com.example.batch;
+
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.configuration.annotation.JobScope;
+import org.springframework.batch.core.configuration.annotation.StepScope;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.file.FlatFileItemReader;
+import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
+import org.springframework.batch.item.file.mapping.BeanWrapperFieldSetMapper;
+import org.springframework.batch.item.file.mapping.DefaultLineMapper;
+import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ClassPathResource;
+
+import javax.persistence.EntityManagerFactory;
+
+@Configuration
+@EnableBatchProcessing
+public class BatchConfiguration {
+
+    private final EntityManagerFactory entityManagerFactory;
+
+    public BatchConfiguration(EntityManagerFactory entityManagerFactory) {
+        this.entityManagerFactory = entityManagerFactory;
+    }
+
+    @Bean
+    @StepScope
+    public FlatFileItemReader<Person> reader() {
+        return new FlatFileItemReaderBuilder<Person>()
+                .name("personItemReader")
+                .resource(new ClassPathResource("data.csv"))
+                .delimited()
+                .names(new String[]{"firstName", "lastName"})
+                .fieldSetMapper(new BeanWrapperFieldSetMapper<>() {{
+                    setTargetType(Person.class);
+                }})
+                .build();
+    }
+
+    @Bean
+    @StepScope
+    public ItemProcessor<Person, Person> processor() {
+        return (person) -> person;  // Identity processor, modify as needed
+    }
+
+    @Bean
+    @StepScope
+    public ItemWriter<Person> writer() {
+        return items -> {
+            for (Person item : items) {
+                // You can process each item here if needed
+                // Example: entityManager.persist(item);
+            }
+        };
+    }
+
+    @Bean
+    public Job importUserJob(JobCompletionNotificationListener listener, Step step1) {
+        return new JobBuilder("importUserJob")
+                .incrementer(new RunIdIncrementer())
+                .listener(listener)
+                .flow(step1)
+                .end()
+                .build();
+    }
+
+    @Bean
+    public Step step1(ItemReader<Person> reader, ItemProcessor<Person, Person> processor, ItemWriter<Person> writer) {
+        return new StepBuilder("step1")
+                .<Person, Person>chunk(10)
+                .reader(reader)
+                .processor(processor)
+                .writer(writer)
+                .build();
+    }
+}
