@@ -1,382 +1,150 @@
-To create a Spring Batch project that reads from a CSV file and writes to an Oracle database using Maven, follow these steps:
+To allow your Spring Batch job to be configured dynamically based on the input file provided, you can pass the file path as a job parameter. This approach will enable you to specify different files at runtime without hardcoding the file path in your configuration.
 
-### Step 1: Set Up Your Project
+Here's how you can achieve this:
 
-First, you need to create a new Maven project. You can do this manually or by using your IDE (e.g., IntelliJ IDEA or Eclipse).
+### 1. Modify `BatchConfig` to Use Job Parameters
 
-#### Maven Project Structure
-Your project structure should look something like this:
-
-```
-spring-batch-csv-to-oracle
-|-- src
-|   |-- main
-|   |   |-- java
-|   |   |   |-- com.example.batch
-|   |   |   |   |-- BatchConfiguration.java
-|   |   |   |   |-- CsvToDatabaseJob.java
-|   |   |   |   |-- Person.java
-|   |   |   |   |-- PersonItemProcessor.java
-|   |   |   |   |-- PersonItemWriter.java
-|   |   |-- resources
-|   |   |   |-- application.properties
-|   |   |   |-- data.csv
-|-- pom.xml
-```
-
-### Step 2: Add Dependencies in `pom.xml`
-Add the necessary dependencies to your `pom.xml` file:
-
-```xml
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-    <groupId>com.example</groupId>
-    <artifactId>spring-batch-csv-to-oracle</artifactId>
-    <version>1.0-SNAPSHOT</version>
-    <packaging>jar</packaging>
-    <properties>
-        <java.version>11</java.version>
-        <spring.boot.version>2.7.3</spring.boot.version>
-    </properties>
-    <dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-batch</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.oracle.database.jdbc</groupId>
-            <artifactId>ojdbc8</artifactId>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-        </plugins>
-    </build>
-</project>
-```
-
-### Step 3: Configure the Application Properties
-In the `src/main/resources/application.properties` file, configure the database connection:
-
-```properties
-spring.datasource.url=jdbc:oracle:thin:@localhost:1521:xe
-spring.datasource.username=your_username
-spring.datasource.password=your_password
-spring.datasource.driver-class-name=oracle.jdbc.OracleDriver
-
-spring.batch.job.enabled=true
-spring.batch.initialize-schema=always
-```
-
-### Step 4: Create the Domain Class
-Create a simple `Person` entity in `src/main/java/com/example/batch/Person.java`:
+Update your `BatchConfig` to read the file path from job parameters:
 
 ```java
-package com.example.batch;
+package com.batch.example.config;
 
-import javax.persistence.Entity;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
-
-@Entity
-public class Person {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    private String firstName;
-    private String lastName;
-
-    // Getters and setters
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public String getFirstName() {
-        return firstName;
-    }
-
-    public void setFirstName(String firstName) {
-        this.firstName = firstName;
-    }
-
-    public String getLastName() {
-        return lastName;
-    }
-
-    public void setLastName(String lastName) {
-        this.lastName = lastName;
-    }
-}
-```
-
-### Step 5: Create the Batch Configuration
-Create the batch configuration class in `src/main/java/com/example/batch/BatchConfiguration.java`:
-
-```java
-package com.example.batch;
-
+import com.batch.example.model.Product;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.core.launch.support.RunIdIncrementer;
-import org.springframework.batch.core.step.tasklet.Tasklet;
+import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.database.JpaItemWriter;
-import org.springframework.batch.item.database.builder.JpaItemWriterBuilder;
-import org.springframework.batch.item.file.FlatFileItemReader;
-import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
-import org.springframework.batch.item.file.mapping.BeanWrapperFieldSetMapper;
-import org.springframework.batch.item.file.mapping.DefaultLineMapper;
-import org.springframework.batch.item.file.mapping.DelimitedLineTokenizer;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.ClassPathResource;
-
-import javax.persistence.EntityManagerFactory;
-
-@Configuration
-@EnableBatchProcessing
-public class BatchConfiguration {
-
-    @Autowired
-    public JobBuilderFactory jobBuilderFactory;
-
-    @Autowired
-    public StepBuilderFactory stepBuilderFactory;
-
-    @Autowired
-    public EntityManagerFactory entityManagerFactory;
-
-    @Bean
-    public FlatFileItemReader<Person> reader() {
-        return new FlatFileItemReaderBuilder<Person>()
-                .name("personItemReader")
-                .resource(new ClassPathResource("data.csv"))
-                .delimited()
-                .names(new String[]{"firstName", "lastName"})
-                .fieldSetMapper(new BeanWrapperFieldSetMapper<>() {{
-                    setTargetType(Person.class);
-                }})
-                .build();
-    }
-
-    @Bean
-    public ItemProcessor<Person, Person> processor() {
-        return (person) -> person;  // Identity processor
-    }
-
-    @Bean
-    public JpaItemWriter<Person> writer() {
-        return new JpaItemWriterBuilder<Person>()
-                .entityManagerFactory(entityManagerFactory)
-                .build();
-    }
-
-    @Bean
-    public Job importUserJob(JobCompletionNotificationListener listener, Step step1) {
-        return jobBuilderFactory.get("importUserJob")
-                .incrementer(new RunIdIncrementer())
-                .listener(listener)
-                .flow(step1)
-                .end()
-                .build();
-    }
-
-    @Bean
-    public Step step1(JpaItemWriter<Person> writer) {
-        return stepBuilderFactory.get("step1")
-                .<Person, Person>chunk(10)
-                .reader(reader())
-                .processor(processor())
-                .writer(writer)
-                .build();
-    }
-}
-```
-
-### Step 6: Create the Job Completion Listener
-Create a listener to handle job completion notifications in `src/main/java/com/example/batch/JobCompletionNotificationListener.java`:
-
-```java
-package com.example.batch;
-
-import org.springframework.batch.core.BatchStatus;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.listener.JobExecutionListenerSupport;
-import org.springframework.stereotype.Component;
-
-@Component
-public class JobCompletionNotificationListener extends JobExecutionListenerSupport {
-
-    @Override
-    public void afterJob(JobExecution jobExecution) {
-        if (jobExecution.getStatus() == BatchStatus.COMPLETED) {
-            System.out.println("JOB FINISHED! Verify the results");
-        }
-    }
-}
-```
-
-### Step 7: Create the CSV File
-Place a sample CSV file named `data.csv` in the `src/main/resources` directory with the following content:
-
-```
-firstName,lastName
-John,Doe
-Jane,Smith
-```
-
-### Step 8: Create the Main Application Class
-Create the main application class in `src/main/java/com/example/batch/CsvToDatabaseJob.java`:
-
-```java
-package com.example.batch;
-
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.Bean;
-
-@SpringBootApplication
-public class CsvToDatabaseJob {
-
-    public static void main(String[] args) {
-        SpringApplication.run(CsvToDatabaseJob.class, args);
-    }
-
-    @Bean
-    public JobCompletionNotificationListener jobCompletionNotificationListener() {
-        return new JobCompletionNotificationListener();
-    }
-}
-```
-
-### Step 9: Run the Application
-Run the application. You should see logs indicating that the job has started and finished. Check your Oracle database to ensure that the data from the CSV file has been inserted into the `Person` table.
-
-This setup covers the basics of reading a CSV file and writing its contents to an Oracle database using Spring Batch. You can expand and customize this setup based on your specific requirements.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-package com.example.batch;
-
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.configuration.annotation.JobScope;
-import org.springframework.batch.core.configuration.annotation.StepScope;
-import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemReader;
 import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
 import org.springframework.batch.item.file.FlatFileItemReader;
 import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
-import org.springframework.batch.item.file.mapping.BeanWrapperFieldSetMapper;
-import org.springframework.batch.item.file.mapping.DefaultLineMapper;
-import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 
-import javax.persistence.EntityManagerFactory;
+import javax.sql.DataSource;
 
 @Configuration
-@EnableBatchProcessing
-public class BatchConfiguration {
-
-    private final EntityManagerFactory entityManagerFactory;
-
-    public BatchConfiguration(EntityManagerFactory entityManagerFactory) {
-        this.entityManagerFactory = entityManagerFactory;
-    }
+public class BatchConfig {
 
     @Bean
-    @StepScope
-    public FlatFileItemReader<Person> reader() {
-        return new FlatFileItemReaderBuilder<Person>()
-                .name("personItemReader")
-                .resource(new ClassPathResource("data.csv"))
-                .delimited()
-                .names(new String[]{"firstName", "lastName"})
-                .fieldSetMapper(new BeanWrapperFieldSetMapper<>() {{
-                    setTargetType(Person.class);
-                }})
-                .build();
-    }
-
-    @Bean
-    @StepScope
-    public ItemProcessor<Person, Person> processor() {
-        return (person) -> person;  // Identity processor, modify as needed
-    }
-
-    @Bean
-    @StepScope
-    public ItemWriter<Person> writer() {
-        return items -> {
-            for (Person item : items) {
-                // You can process each item here if needed
-                // Example: entityManager.persist(item);
-            }
-        };
-    }
-
-    @Bean
-    public Job importUserJob(JobCompletionNotificationListener listener, Step step1) {
-        return new JobBuilder("importUserJob")
-                .incrementer(new RunIdIncrementer())
+    public Job jobBean(JobRepository jobRepository,
+                       JobCompletionNotificationImpl listener,
+                       Step steps) {
+        return new JobBuilder("job", jobRepository)
                 .listener(listener)
-                .flow(step1)
-                .end()
+                .start(steps)
                 .build();
     }
 
     @Bean
-    public Step step1(ItemReader<Person> reader, ItemProcessor<Person, Person> processor, ItemWriter<Person> writer) {
-        return new StepBuilder("step1")
-                .<Person, Person>chunk(10)
+    public Step steps(JobRepository jobRepository,
+                      DataSourceTransactionManager transactionManager,
+                      ItemReader<Product> reader,
+                      ItemProcessor<Product, Product> processor,
+                      ItemWriter<Product> writer) {
+        return new StepBuilder("jobStep", jobRepository)
+                .<Product, Product>chunk(5, transactionManager)
                 .reader(reader)
                 .processor(processor)
                 .writer(writer)
                 .build();
     }
+
+    @Bean
+    @StepScope
+    public FlatFileItemReader<Product> reader(@Value("#{jobParameters['filePath']}") String filePath) {
+        return new FlatFileItemReaderBuilder<Product>()
+                .name("itemReader")
+                .resource(new FileSystemResource(filePath))
+                .delimited()
+                .names("productId", "title", "description", "price", "discount")
+                .targetType(Product.class)
+                .build();
+    }
+
+    @Bean
+    public ItemProcessor<Product, Product> itemProcessor() {
+        return new CustomItemProcessor();
+    }
+
+    @Bean
+    public ItemWriter<Product> itemWriter(DataSource dataSource) {
+        return new JdbcBatchItemWriterBuilder<Product>()
+                .sql("insert into products(product_id, title, description, price, discount, discounted_price) values (:productId, :title, :description, :price, :discount, :discountedPrice)")
+                .dataSource(dataSource)
+                .beanMapped()
+                .build();
+    }
 }
+```
+
+### 2. Update Main Application Class to Accept File Path
+
+Modify your main application class to accept a file path as an argument and pass it as a job parameter:
+
+```java
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class BatchApplication implements CommandLineRunner {
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Job job;
+
+    public static void main(String[] args) {
+        SpringApplication.run(BatchApplication.class, args);
+    }
+
+    @Override
+    public void run(String... args) throws Exception {
+        if (args.length > 0) {
+            String filePath = args[0];
+            JobParameters jobParameters = new JobParametersBuilder()
+                    .addString("filePath", filePath)
+                    .addLong("time", System.currentTimeMillis())
+                    .toJobParameters();
+
+            jobLauncher.run(job, jobParameters);
+        } else {
+            System.out.println("Please provide the file path as a parameter.");
+        }
+    }
+}
+```
+
+### Explanation
+
+1. **`@StepScope` Annotation**:
+   - The `@StepScope` annotation on the `reader` bean allows the bean to be initialized with job parameters at runtime. This is crucial for dynamically passing parameters like the file path.
+
+2. **`@Value("#{jobParameters['filePath']}")`**:
+   - This SpEL (Spring Expression Language) expression retrieves the `filePath` parameter from the job parameters passed at runtime.
+
+3. **Main Application Class**:
+   - The `run` method now checks if a file path argument is provided. If so, it creates job parameters with the file path and a unique timestamp (to ensure a unique job instance) and launches the job with these parameters.
+
+### Running the Application
+
+You can now run your Spring Boot application with the file path as a command-line argument:
+
+```sh
+mvn spring-boot:run -Dspring-boot.run.arguments="path/to/your/data.csv"
+```
+
+This approach ensures that your batch job can process different files based on the input provided at runtime, making your application more flexible and dynamic.
