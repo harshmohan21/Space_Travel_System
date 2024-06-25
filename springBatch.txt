@@ -148,3 +148,107 @@ mvn spring-boot:run -Dspring-boot.run.arguments="path/to/your/data.csv"
 ```
 
 This approach ensures that your batch job can process different files based on the input provided at runtime, making your application more flexible and dynamic.
+
+
+
+
+
+
+If passing `jobParameters` directly to the `itemWriter` method is causing errors, we can use an alternative approach by defining a custom writer class that can accept `jobParameters` in its constructor. Here's how you can do it:
+
+### Custom Item Writer
+
+First, create a custom writer class that accepts `jobParameters`:
+
+```java
+public class CustomItemWriter implements ItemWriter<Product> {
+
+    private final Map<String, Object> jobParameters;
+    private final DataSource dataSource;
+
+    public CustomItemWriter(Map<String, Object> jobParameters, DataSource dataSource) {
+        this.jobParameters = jobParameters;
+        this.dataSource = dataSource;
+    }
+
+    @Override
+    public void write(List<? extends Product> items) throws Exception {
+        System.out.println("Job Parameters: " + jobParameters);
+
+        JdbcBatchItemWriter<Product> writer = new JdbcBatchItemWriterBuilder<Product>()
+                .sql("INSERT INTO products(product_id, title, description, price, discount, discounted_price) VALUES (:productId, :title, :description, :price, :discount, :discountedPrice)")
+                .dataSource(dataSource)
+                .beanMapped()
+                .build();
+        
+        writer.afterPropertiesSet();  // Ensure the writer is properly initialized
+        writer.write(items);
+    }
+}
+```
+
+### Configuration
+
+Next, modify the configuration to use this custom writer:
+
+```java
+@Configuration
+@EnableBatchProcessing
+public class BatchConfig {
+
+    @Bean
+    public JobParametersValidator jobParametersValidator() {
+        return new DefaultJobParametersValidator(
+            new String[] {"inputFile"}, // required keys
+            new String[] {"outputDirectory"} // optional keys
+        );
+    }
+
+    @Bean
+    public Job job(JobBuilderFactory jobBuilderFactory, StepBuilderFactory stepBuilderFactory, 
+                   FlatFileItemReader<Product> reader, 
+                   ItemProcessor<Product, Product> processor, 
+                   ItemWriter<Product> writer) {
+        return jobBuilderFactory.get("job")
+                .validator(jobParametersValidator())
+                .start(stepBuilderFactory.get("step")
+                        .<Product, Product>chunk(10)
+                        .reader(reader)
+                        .processor(processor)
+                        .writer(writer)
+                        .build())
+                .build();
+    }
+
+    @Bean
+    public FlatFileItemReader<Product> reader(@Value("#{jobParameters}") Map<String, Object> jobParameters) throws Exception {
+        FlatFileItemReader<Product> reader = new FlatFileItemReader<>();
+        // Set up the reader with jobParameters
+        return reader;
+    }
+
+    @Bean
+    public ItemProcessor<Product, Product> itemProcessor(@Value("#{jobParameters}") Map<String, Object> jobParameters) {
+        System.out.println("inside itemProcessor");
+        ItemProcessor<Product, Product> proc = new CustomItemProcessor(jobParameters);
+        System.out.println(proc.toString());
+        return proc;
+    }
+
+    @Bean
+    public ItemWriter<Product> itemWriter(@Value("#{jobParameters}") Map<String, Object> jobParameters, DataSource dataSource) {
+        System.out.println("inside itemWriter + dataSource");
+        return new CustomItemWriter(jobParameters, dataSource);
+    }
+}
+```
+
+### Summary
+
+In this setup:
+1. A `CustomItemWriter` class is created to accept `jobParameters` and `dataSource` in its constructor.
+2. The `CustomItemWriter` is initialized in the configuration with the necessary parameters.
+3. Inside the `write` method of `CustomItemWriter`, a `JdbcBatchItemWriter` is created and used to perform the actual writing to the database.
+
+This approach ensures that the job parameters are available within the writer without causing method signature issues.
+
