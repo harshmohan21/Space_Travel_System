@@ -1,15 +1,41 @@
+
 import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import javax.sql.DataSource;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Bean
 public ItemWriter<Map<String, Object>> itemWriter(DataSource dataSource) {
     System.out.println("inside itemWriter: " + dataSource);
-    return new JdbcBatchItemWriterBuilder<Map<String, Object>>()
-        .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
-        .sql("INSERT INTO your_table_name (column1, column2, column3) VALUES (:column1, :column2, :column3)")
-        .dataSource(dataSource)
-        .build();
+    return items -> {
+        if (items.isEmpty()) {
+            return; // No items to write
+        }
+        
+        // Get the keys from the first item to build the SQL statement
+        Map<String, Object> sampleItem = items.get(0);
+        String sql = buildDynamicSql(sampleItem);
+
+        JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriterBuilder<Map<String, Object>>()
+            .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
+            .sql(sql)
+            .dataSource(dataSource)
+            .build();
+
+        // Write the items
+        writer.write(items);
+    };
+}
+
+private String buildDynamicSql(Map<String, Object> sampleItem) {
+    String columns = String.join(", ", sampleItem.keySet());
+    String placeholders = sampleItem.keySet().stream()
+        .map(key -> ":" + key)
+        .collect(Collectors.joining(", "));
+
+    return "INSERT INTO your_table_name (" + columns + ") VALUES (" + placeholders + ")";
 }
 
 private SqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
