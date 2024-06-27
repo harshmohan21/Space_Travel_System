@@ -1,15 +1,20 @@
-    private Object readValue(FieldSet fieldSet, String column) {
-        try {
-            return fieldSet.readInt(column);
-        } catch (Exception e1) {
-            try {
-                return fieldSet.readDouble(column);
-            } catch (Exception e2) {
-                try {
-                    return fieldSet.readBoolean(column);
-                } catch (Exception e3) {
-                    return fieldSet.readString(column);
-                }
-            }
-        }
+private Object readValue(FieldSet fieldSet, String column) {
+    // Try to read as integer
+    try {
+        return fieldSet.readInt(column);
+    } catch (Exception ignored) {}
+
+    // Try to read as double
+    try {
+        return fieldSet.readDouble(column);
+    } catch (Exception ignored) {}
+
+    // Try to read as boolean only if the value is exactly "true" or "false"
+    String value = fieldSet.readString(column);
+    if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+        return Boolean.parseBoolean(value);
     }
+
+    // Return as string
+    return value;
+}
