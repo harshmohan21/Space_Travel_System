@@ -1,45 +1,58 @@
 
+import org.springframework.batch.item.database.JdbcBatchItemWriter;
 import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+
 import javax.sql.DataSource;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-@Bean
-public ItemWriter<Map<String, Object>> itemWriter(DataSource dataSource) {
-    System.out.println("inside itemWriter: " + dataSource);
-    return items -> {
-        if (items.isEmpty()) {
-            return; // No items to write
-        }
-        
-        // Get the keys from the first item to build the SQL statement
-        Map<String, Object> sampleItem = items.get(0);
-        String sql = buildDynamicSql(sampleItem);
+@Configuration
+public class BatchConfiguration {
 
-        JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriterBuilder<Map<String, Object>>()
-            .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
-            .sql(sql)
-            .dataSource(dataSource)
-            .build();
+    @Bean
+    public ItemWriter<Map<String, Object>> itemWriter(DataSource dataSource) {
+        System.out.println("inside itemWriter: " + dataSource);
+        return items -> {
+            if (items.isEmpty()) {
+                return; // No items to write
+            }
 
-        // Write the items
-        writer.write(items);
-    };
-}
+            // Get the keys from the first item to build the SQL statement
+            Map<String, Object> sampleItem = items.get(0);
+            String sql = buildDynamicSql(sampleItem);
 
-private String buildDynamicSql(Map<String, Object> sampleItem) {
-    String columns = String.join(", ", sampleItem.keySet());
-    String placeholders = sampleItem.keySet().stream()
-        .map(key -> ":" + key)
-        .collect(Collectors.joining(", "));
+            JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriterBuilder<Map<String, Object>>()
+                .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
+                .sql(sql)
+                .dataSource(dataSource)
+                .build();
 
-    return "INSERT INTO your_table_name (" + columns + ") VALUES (" + placeholders + ")";
-}
+            // Open the writer (necessary because we are manually constructing it)
+            writer.afterPropertiesSet();
+            
+            // Write the items
+            writer.write(items);
+        };
+    }
 
-private SqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
-    MapSqlParameterSource parameterSource = new MapSqlParameterSource();
-    item.forEach(parameterSource::addValue);
-    return parameterSource;
+    private String buildDynamicSql(Map<String, Object> sampleItem) {
+        String columns = String.join(", ", sampleItem.keySet());
+        String placeholders = sampleItem.keySet().stream()
+            .map(key -> ":" + key)
+            .collect(Collectors.joining(", "));
+
+        return "INSERT INTO products (" + columns + ") VALUES (" + placeholders + ")";
+    }
+
+    private SqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
+        MapSqlParameterSource parameterSource = new MapSqlParameterSource();
+        item.forEach(parameterSource::addValue);
+        return parameterSource;
+    }
+
+    // Other beans for job, steps, reader, and processor can be defined here
 }
