@@ -1,4 +1,5 @@
-
+import org.springframework.batch.item.Chunk;
+import org.springframework.batch.item.ItemWriter;
 import org.springframework.batch.item.database.JdbcBatchItemWriter;
 import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
 import org.springframework.context.annotation.Bean;
@@ -21,8 +22,8 @@ public class BatchConfiguration {
                 return; // No items to write
             }
 
-            // Get the keys from the first item to build the SQL statement
-            Map<String, Object> sampleItem = items.get(0);
+            // Convert the chunk to a list to access the first item
+            Map<String, Object> sampleItem = items.iterator().next();
             String sql = buildDynamicSql(sampleItem);
 
             JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriterBuilder<Map<String, Object>>()
