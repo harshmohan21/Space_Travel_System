@@ -1,20 +1,19 @@
-private Object readValue(FieldSet fieldSet, String column) {
-    // Try to read as integer
-    try {
-        return fieldSet.readInt(column);
-    } catch (Exception ignored) {}
+import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 
-    // Try to read as double
-    try {
-        return fieldSet.readDouble(column);
-    } catch (Exception ignored) {}
+@Bean
+public ItemWriter<Map<String, Object>> itemWriter(DataSource dataSource) {
+    System.out.println("inside itemWriter: " + dataSource);
+    return new JdbcBatchItemWriterBuilder<Map<String, Object>>()
+        .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
+        .sql("INSERT INTO your_table_name (column1, column2, column3) VALUES (:column1, :column2, :column3)")
+        .dataSource(dataSource)
+        .build();
+}
 
-    // Try to read as boolean only if the value is exactly "true" or "false"
-    String value = fieldSet.readString(column);
-    if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
-        return Boolean.parseBoolean(value);
-    }
-
-    // Return as string
-    return value;
+private SqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
+    MapSqlParameterSource parameterSource = new MapSqlParameterSource();
+    item.forEach(parameterSource::addValue);
+    return parameterSource;
 }
