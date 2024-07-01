@@ -1,35 +1,28 @@
-The `ExhaustedRetryException` indicates that Spring Batch has exhausted all retry attempts for an item, and since the exception is not skippable, it cannot proceed with the batch job. To handle this scenario, you can do the following:
+The error you're encountering indicates that your `CustomSkipPolicy` class must correctly implement the `shouldSkip` method from the `SkipPolicy` interface. The method signature should use `long` instead of `int` for the `skipCount` parameter.
 
-1. **Configure Skippable Exceptions**: Ensure that the exception type you're encountering is configured as skippable in your step configuration.
-2. **Configure Retryable Exceptions**: Ensure that the exception type is also configured for retry logic.
-3. **Use a `SkipPolicy`**: Define a custom `SkipPolicy` to decide whether to skip an item based on the exception.
+Here’s the corrected implementation:
 
-Here's how you can configure these in your Spring Batch job:
-
-### Step 1: Configure Skippable and Retryable Exceptions
-
-Make sure that your step configuration includes the proper exceptions in the skip and retry configurations.
+### Correct Implementation of CustomSkipPolicy
 
 ```java
-@Bean
-public Step step1() {
-    return stepBuilderFactory.get("step1")
-            .<Map<String, Object>, Map<String, Object>>chunk(10)
-            .reader(reader())
-            .processor(processor())
-            .writer(writer())
-            .faultTolerant()
-            .skip(CustomException.class) // Replace CustomException with your specific exception
-            .skipLimit(10)
-            .retry(CustomException.class) // Replace CustomException with your specific exception
-            .retryLimit(3)
-            .build();
+import org.springframework.batch.core.step.skip.SkipPolicy;
+
+public class CustomSkipPolicy implements SkipPolicy {
+    @Override
+    public boolean shouldSkip(Throwable t, long skipCount) {
+        // Logic to determine if the exception should be skipped
+        if (t instanceof CustomException && skipCount <= 10) {
+            return true;
+        } else {
+            return false;
+        }
+    }
 }
 ```
 
-### Step 2: Define a Custom `SkipPolicy`
+### Correct Step Configuration
 
-If you need more control over which exceptions are skippable, you can define a custom `SkipPolicy`.
+Ensure that your step configuration uses the corrected `CustomSkipPolicy`:
 
 ```java
 @Bean
@@ -45,65 +38,117 @@ public Step step1() {
             .retryLimit(3)
             .build();
 }
-
-public class CustomSkipPolicy implements SkipPolicy {
-    @Override
-    public boolean shouldSkip(Throwable t, int skipCount) {
-        // Logic to determine if the exception should be skipped
-        if (t instanceof CustomException && skipCount <= 10) {
-            return true;
-        } else {
-            return false;
-        }
-    }
-}
 ```
 
-### Step 3: Define Your Custom Exception
+### Full Example with Custom Exception Handling
 
-If you don't have a specific exception type, create a custom exception.
+Here's the full example with custom exception handling, including a custom exception class:
 
 ```java
-public class CustomException extends RuntimeException {
-    public CustomException(String message) {
-        super(message);
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.step.skip.SkipPolicy;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.Map;
+
+@Configuration
+public class BatchConfiguration {
+
+    private final StepBuilderFactory stepBuilderFactory;
+
+    public BatchConfiguration(StepBuilderFactory stepBuilderFactory) {
+        this.stepBuilderFactory = stepBuilderFactory;
     }
-}
-```
 
-### Handling Invalid Entries in the Processor
+    @Bean
+    public Step step1() {
+        return stepBuilderFactory.get("step1")
+                .<Map<String, Object>, Map<String, Object>>chunk(10)
+                .reader(reader())
+                .processor(processor())
+                .writer(writer())
+                .faultTolerant()
+                .skipPolicy(new CustomSkipPolicy())
+                .retry(CustomException.class)
+                .retryLimit(3)
+                .build();
+    }
 
-Another approach is to handle invalid entries in the `ItemProcessor` by returning `null` for invalid items, which Spring Batch treats as filtered out items.
+    @Bean
+    public FlatFileItemReader<Map<String, Object>> reader() {
+        // Reader implementation
+        return null; // Replace with actual reader implementation
+    }
 
-```java
-public class CustomProcessor implements ItemProcessor<Map<String, Object>, Map<String, Object>> {
-    @Override
-    public Map<String, Object> process(Map<String, Object> item) throws Exception {
-        try {
-            // Processing logic
-            if (isValid(item)) {
-                return item;
-            } else {
-                // Handle invalid item
-                return null; // Filter out invalid item
+    @Bean
+    public ItemProcessor<Map<String, Object>, Map<String, Object>> processor() {
+        return new CustomProcessor();
+    }
+
+    @Bean
+    public ItemWriter<Map<String, Object>> writer() {
+        return items -> {
+            // Writing logic
+            for (Map<String, Object> item : items) {
+                System.out.println(item);
             }
-        } catch (Exception e) {
-            // Handle exception
-            throw new CustomException("Error processing item", e);
+        };
+    }
+
+    public static class CustomProcessor implements ItemProcessor<Map<String, Object>, Map<String, Object>> {
+        @Override
+        public Map<String, Object> process(Map<String, Object> item) throws Exception {
+            try {
+                // Processing logic
+                if (isValid(item)) {
+                    return item;
+                } else {
+                    // Handle invalid item
+                    return null; // Filter out invalid item
+                }
+            } catch (Exception e) {
+                // Handle exception
+                throw new CustomException("Error processing item", e);
+            }
+        }
+
+        private boolean isValid(Map<String, Object> item) {
+            // Validation logic
+            return true; // Replace with actual validation
         }
     }
 
-    private boolean isValid(Map<String, Object> item) {
-        // Validation logic
-        return true; // Replace with actual validation
+    public static class CustomException extends RuntimeException {
+        public CustomException(String message) {
+            super(message);
+        }
+
+        public CustomException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    public static class CustomSkipPolicy implements SkipPolicy {
+        @Override
+        public boolean shouldSkip(Throwable t, long skipCount) {
+            // Logic to determine if the exception should be skipped
+            if (t instanceof CustomException && skipCount <= 10) {
+                return true;
+            } else {
+                return false;
+            }
+        }
     }
 }
 ```
 
-### Summary
+### Explanation
 
-- Ensure the exception type you're encountering is configured as skippable and retryable in your step configuration.
-- Use a custom `SkipPolicy` if you need more control over which exceptions are skippable.
-- Consider handling invalid entries in the `ItemProcessor` by filtering them out (returning `null`).
+1. **CustomSkipPolicy**: Implements `SkipPolicy` with the correct `shouldSkip` method signature.
+2. **Step Configuration**: Uses the custom skip policy and retry configuration.
+3. **CustomProcessor**: Processes items and handles invalid items by returning `null`.
+4. **CustomException**: A custom exception class used for specific error handling.
 
-By implementing these strategies, you can handle invalid entries and exceptions more gracefully in your Spring Batch job, avoiding job failures due to unskippable exceptions.
+This configuration should ensure that your Spring Batch job can handle invalid entries and exceptions as required.
