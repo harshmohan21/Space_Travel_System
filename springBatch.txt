@@ -1,37 +1,109 @@
+The `ExhaustedRetryException` indicates that Spring Batch has exhausted all retry attempts for an item, and since the exception is not skippable, it cannot proceed with the batch job. To handle this scenario, you can do the following:
+
+1. **Configure Skippable Exceptions**: Ensure that the exception type you're encountering is configured as skippable in your step configuration.
+2. **Configure Retryable Exceptions**: Ensure that the exception type is also configured for retry logic.
+3. **Use a `SkipPolicy`**: Define a custom `SkipPolicy` to decide whether to skip an item based on the exception.
+
+Here's how you can configure these in your Spring Batch job:
+
+### Step 1: Configure Skippable and Retryable Exceptions
+
+Make sure that your step configuration includes the proper exceptions in the skip and retry configurations.
+
+```java
 @Bean
-public Step steps(
-    JobRepository jobRepository,
-    DataSourceTransactionManager transactionManager,
-    ItemReader<Map<String, Object>> reader,
-    ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor,
-    ItemWriter<Map<String, Object>> writer,
-    TaskExecutor taskExecutor
-) throws Exception {
-    return new StepBuilder("jobStep", jobRepository)
-        .<Map<String, Object>, Map<String, Object>>chunk(1, transactionManager)
-        .reader(reader)
-        .processor(itemProcessor)
-        .writer(writer)
-        .taskExecutor(taskExecutor)
-        .faultTolerant()
-        .skip(FlatFileParseException.class)
-        .skipLimit(1)
-        .listener(new SkipListener<Map<String, Object>, Map<String, Object>>() {
-            @Override
-            public void onSkipInRead(Throwable t) {
-                System.out.println("Skipped in read: " + t.getMessage());
-            }
+public Step step1() {
+    return stepBuilderFactory.get("step1")
+            .<Map<String, Object>, Map<String, Object>>chunk(10)
+            .reader(reader())
+            .processor(processor())
+            .writer(writer())
+            .faultTolerant()
+            .skip(CustomException.class) // Replace CustomException with your specific exception
+            .skipLimit(10)
+            .retry(CustomException.class) // Replace CustomException with your specific exception
+            .retryLimit(3)
+            .build();
+}
+```
 
-            @Override
-            public void onSkipInWrite(Map<String, Object> item, Throwable t) {
-                System.out.println("Skipped in write: " + item + ", due to: " + t.getMessage());
-            }
+### Step 2: Define a Custom `SkipPolicy`
 
-            @Override
-            public void onSkipInProcess(Map<String, Object> item, Throwable t) {
-                System.out.println("Skipped in process: " + item + ", due to: " + t.getMessage());
-            }
-        })
-        .build();
+If you need more control over which exceptions are skippable, you can define a custom `SkipPolicy`.
+
+```java
+@Bean
+public Step step1() {
+    return stepBuilderFactory.get("step1")
+            .<Map<String, Object>, Map<String, Object>>chunk(10)
+            .reader(reader())
+            .processor(processor())
+            .writer(writer())
+            .faultTolerant()
+            .skipPolicy(new CustomSkipPolicy())
+            .retry(CustomException.class)
+            .retryLimit(3)
+            .build();
 }
 
+public class CustomSkipPolicy implements SkipPolicy {
+    @Override
+    public boolean shouldSkip(Throwable t, int skipCount) {
+        // Logic to determine if the exception should be skipped
+        if (t instanceof CustomException && skipCount <= 10) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+}
+```
+
+### Step 3: Define Your Custom Exception
+
+If you don't have a specific exception type, create a custom exception.
+
+```java
+public class CustomException extends RuntimeException {
+    public CustomException(String message) {
+        super(message);
+    }
+}
+```
+
+### Handling Invalid Entries in the Processor
+
+Another approach is to handle invalid entries in the `ItemProcessor` by returning `null` for invalid items, which Spring Batch treats as filtered out items.
+
+```java
+public class CustomProcessor implements ItemProcessor<Map<String, Object>, Map<String, Object>> {
+    @Override
+    public Map<String, Object> process(Map<String, Object> item) throws Exception {
+        try {
+            // Processing logic
+            if (isValid(item)) {
+                return item;
+            } else {
+                // Handle invalid item
+                return null; // Filter out invalid item
+            }
+        } catch (Exception e) {
+            // Handle exception
+            throw new CustomException("Error processing item", e);
+        }
+    }
+
+    private boolean isValid(Map<String, Object> item) {
+        // Validation logic
+        return true; // Replace with actual validation
+    }
+}
+```
+
+### Summary
+
+- Ensure the exception type you're encountering is configured as skippable and retryable in your step configuration.
+- Use a custom `SkipPolicy` if you need more control over which exceptions are skippable.
+- Consider handling invalid entries in the `ItemProcessor` by filtering them out (returning `null`).
+
+By implementing these strategies, you can handle invalid entries and exceptions more gracefully in your Spring Batch job, avoiding job failures due to unskippable exceptions.
