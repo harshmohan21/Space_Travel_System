@@ -162,8 +162,56 @@ public class CustomProcessor implements ItemProcessor<Map<String, Object>, Map<S
 
 ### Summary
 
-1. **Skip Logic**: Configure your step to skip `BadSqlGrammarException` and continue processing.
+1. **Skip Logic**: k Configure your step to skip `BadSqlGrammarException` and continue processing.
 2. **Custom Skip Policy**: Define a custom `SkipPolicy` to have more control over which exceptions to skip.
 3. **Processor Validation**: Ensure your processor validates and transforms data to prevent data type mismatches.
 
 By implementing these strategies, you can handle `BadSqlGrammarException` and other SQL-related issues gracefully in your Spring Batch job, ensuring the job continues processing valid data while skipping or retrying problematic items.
+
+
+
+
+
+
+
+
+
+*******************************************
+@Bean
+public Step steps(
+    JobRepository jobRepository,
+    DataSourceTransactionManager transactionManager,
+    ItemReader<Map<String, Object>> reader,
+    ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor,
+    ItemWriter<Map<String, Object>> writer,
+    TaskExecutor taskExecutor
+) throws Exception {
+    return new StepBuilder("jobStep", jobRepository)
+        .<Map<String, Object>, Map<String, Object>>chunk(1, transactionManager)
+        .reader(reader)
+        .processor(itemProcessor)
+        .writer(writer)
+        .taskExecutor(taskExecutor)
+        .faultTolerant()
+        .skip(FlatFileParseException.class)
+        .skip(NumberFormatException.class) // Add more exceptions here
+        .skipLimit(1) // Total number of skips allowed
+        .listener(new SkipListener<Map<String, Object>, Map<String, Object>>() {
+            @Override
+            public void onSkipInRead(Throwable t) {
+                System.out.println("Skipped in read: " + t.getMessage());
+            }
+
+            @Override
+            public void onSkipInWrite(Map<String, Object> item, Throwable t) {
+                System.out.println("Skipped in write: " + item + ", due to: " + t.getMessage());
+            }
+
+            @Override
+            public void onSkipInProcess(Map<String, Object> item, Throwable t) {
+                System.out.println("Skipped in process: " + item + ", due to: " + t.getMessage());
+            }
+        })
+        .build();
+}
+
