@@ -1,56 +1,24 @@
-The error you're encountering indicates that your `CustomSkipPolicy` class must correctly implement the `shouldSkip` method from the `SkipPolicy` interface. The method signature should use `long` instead of `int` for the `skipCount` parameter.
+Handling `BadSqlGrammarException` in Spring Batch involves configuring your batch job to recognize and appropriately deal with SQL grammar errors that occur due to data type mismatches or other SQL issues during the write process. Here's how you can manage these exceptions effectively:
 
-Here’s the corrected implementation:
+### 1. **Catch and Handle BadSqlGrammarException**
 
-### Correct Implementation of CustomSkipPolicy
+First, you need to ensure that `BadSqlGrammarException` is caught and handled correctly. You can do this by configuring it in the skip policy or fault-tolerant settings of your step.
 
-```java
-import org.springframework.batch.core.step.skip.SkipPolicy;
+### 2. **Skip Logic for BadSqlGrammarException**
 
-public class CustomSkipPolicy implements SkipPolicy {
-    @Override
-    public boolean shouldSkip(Throwable t, long skipCount) {
-        // Logic to determine if the exception should be skipped
-        if (t instanceof CustomException && skipCount <= 10) {
-            return true;
-        } else {
-            return false;
-        }
-    }
-}
-```
-
-### Correct Step Configuration
-
-Ensure that your step configuration uses the corrected `CustomSkipPolicy`:
-
-```java
-@Bean
-public Step step1() {
-    return stepBuilderFactory.get("step1")
-            .<Map<String, Object>, Map<String, Object>>chunk(10)
-            .reader(reader())
-            .processor(processor())
-            .writer(writer())
-            .faultTolerant()
-            .skipPolicy(new CustomSkipPolicy())
-            .retry(CustomException.class)
-            .retryLimit(3)
-            .build();
-}
-```
-
-### Full Example with Custom Exception Handling
-
-Here's the full example with custom exception handling, including a custom exception class:
+You can configure your step to skip items that cause `BadSqlGrammarException` and continue processing the rest.
 
 ```java
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
 import org.springframework.batch.core.step.skip.SkipPolicy;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemWriter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.BadSqlGrammarException;
 
+import java.util.List;
 import java.util.Map;
 
 @Configuration
@@ -70,9 +38,10 @@ public class BatchConfiguration {
                 .processor(processor())
                 .writer(writer())
                 .faultTolerant()
-                .skipPolicy(new CustomSkipPolicy())
-                .retry(CustomException.class)
-                .retryLimit(3)
+                .skip(BadSqlGrammarException.class) // Skip BadSqlGrammarException
+                .skipLimit(10) // Set your desired skip limit
+                .retry(BadSqlGrammarException.class) // Retry logic if needed
+                .retryLimit(3) // Set your desired retry limit
                 .build();
     }
 
@@ -134,7 +103,7 @@ public class BatchConfiguration {
         @Override
         public boolean shouldSkip(Throwable t, long skipCount) {
             // Logic to determine if the exception should be skipped
-            if (t instanceof CustomException && skipCount <= 10) {
+            if (t instanceof BadSqlGrammarException && skipCount <= 10) {
                 return true;
             } else {
                 return false;
@@ -144,11 +113,57 @@ public class BatchConfiguration {
 }
 ```
 
-### Explanation
+### 3. **Custom Skip Policy**
 
-1. **CustomSkipPolicy**: Implements `SkipPolicy` with the correct `shouldSkip` method signature.
-2. **Step Configuration**: Uses the custom skip policy and retry configuration.
-3. **CustomProcessor**: Processes items and handles invalid items by returning `null`.
-4. **CustomException**: A custom exception class used for specific error handling.
+If you need more control over which exceptions are skippable, you can define a custom `SkipPolicy`.
 
-This configuration should ensure that your Spring Batch job can handle invalid entries and exceptions as required.
+```java
+public class CustomSkipPolicy implements SkipPolicy {
+    @Override
+    public boolean shouldSkip(Throwable t, long skipCount) {
+        // Logic to determine if the exception should be skipped
+        if (t instanceof BadSqlGrammarException && skipCount <= 10) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+}
+```
+
+### 4. **Processor Logic**
+
+Ensure your `ItemProcessor` handles data validation and transformation to mitigate data type mismatches.
+
+```java
+public class CustomProcessor implements ItemProcessor<Map<String, Object>, Map<String, Object>> {
+    @Override
+    public Map<String, Object> process(Map<String, Object> item) throws Exception {
+        try {
+            // Data validation and transformation logic
+            if (isValid(item)) {
+                return item;
+            } else {
+                // Handle invalid item
+                return null; // Filter out invalid item
+            }
+        } catch (Exception e) {
+            // Handle exception
+            throw new CustomException("Error processing item", e);
+        }
+    }
+
+    private boolean isValid(Map<String, Object> item) {
+        // Validation logic
+        return true; // Replace with actual validation
+    }
+}
+```
+
+### Summary
+
+1. **Skip Logic**: Configure your step to skip `BadSqlGrammarException` and continue processing.
+2. **Custom Skip Policy**: Define a custom `SkipPolicy` to have more control over which exceptions to skip.
+3. **Processor Validation**: Ensure your processor validates and transforms data to prevent data type mismatches.
+
+By implementing these strategies, you can handle `BadSqlGrammarException` and other SQL-related issues gracefully in your Spring Batch job, ensuring the job continues processing valid data while skipping or retrying problematic items.
