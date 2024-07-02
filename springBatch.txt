@@ -1,85 +1,214 @@
-import org.springframework.batch.item.file.transform.FieldSet;
+To implement the `readValue` method based on an array of datatype names corresponding to each column, you need to:
+
+1. **Store Data Type Names**: Use an array of strings where each entry is the name of the data type corresponding to the column.
+2. **Dynamic Type Handling**: Use a method to convert these type names to actual Java classes.
+3. **Read Values Based on Type**: Update the `readValue` method to use this information.
+
+Here is how you can do it:
+
+### Step 1: Store Data Type Names
+
+Assume you have an array of column names and a corresponding array of data type names.
+
+```java
+String[] columns = {"id", "name", "salary", "active", "birthdate", "appointmentTime", "timestamp"};
+String[] dataTypes = {"Integer", "String", "Double", "Boolean", "Date", "Time", "Timestamp"};
+```
+
+### Step 2: Convert Data Type Names to Classes
+
+Create a utility method to convert data type names to actual Java classes.
+
+```java
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
+
+public class DataTypeConverter {
+
+    public static Class<?> getClassFromTypeName(String typeName) {
+        switch (typeName) {
+            case "Integer":
+                return Integer.class;
+            case "Double":
+                return Double.class;
+            case "Boolean":
+                return Boolean.class;
+            case "Date":
+                return Date.class;
+            case "Time":
+                return Time.class;
+            case "Timestamp":
+                return Timestamp.class;
+            case "String":
+            default:
+                return String.class;
+        }
+    }
+}
+```
+
+### Step 3: Update `readValue` Method
+
+Update the `readValue` method to use the data type information.
+
+```java
+import org.springframework.batch.item.file.transform.FieldSet;
 
 public class FieldSetUtils {
 
-    private static final String DATE_FORMAT = "yyyy-MM-dd";
-    private static final String TIME_FORMAT = "HH:mm:ss";
-    private static final String TIMESTAMP_FORMAT = "yyyy-MM-dd HH:mm:ss";
-
-    public static Object readValue(FieldSet fieldSet, String column) {
+    public static Object readValue(FieldSet fieldSet, String column, Class<?> columnType) {
         try {
-            return fieldSet.readInt(column);
-        } catch (Exception e1) {
-            try {
+            if (columnType == Integer.class) {
+                return fieldSet.readInt(column);
+            } else if (columnType == Double.class) {
                 return fieldSet.readDouble(column);
-            } catch (Exception e2) {
-                try {
-                    return fieldSet.readBoolean(column);
-                } catch (Exception e3) {
-                    try {
-                        return fieldSet.readDate(column, DATE_FORMAT);
-                    } catch (Exception e4) {
-                        try {
-                            return fieldSet.readDate(column, TIME_FORMAT);
-                        } catch (Exception e5) {
-                            try {
-                                return fieldSet.readDate(column, TIMESTAMP_FORMAT);
-                            } catch (Exception e6) {
-                                return fieldSet.readString(column);
-                            }
-                        }
-                    }
-                }
+            } else if (columnType == Boolean.class) {
+                return fieldSet.readBoolean(column);
+            } else if (columnType == Date.class) {
+                return fieldSet.readDate(column);
+            } else if (columnType == Time.class) {
+                return Time.valueOf(fieldSet.readString(column));
+            } else if (columnType == Timestamp.class) {
+                return Timestamp.valueOf(fieldSet.readString(column));
+            } else if (columnType == String.class) {
+                return fieldSet.readString(column);
+            } else {
+                throw new IllegalArgumentException("Unsupported column type: " + columnType);
             }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to read value for column: " + column + ", expected type: " + columnType, e);
         }
-    }
-
-    public static Date readSqlDate(FieldSet fieldSet, String column) {
-        try {
-            String value = fieldSet.readString(column);
-            return Date.valueOf(value);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    public static Time readSqlTime(FieldSet fieldSet, String column) {
-        try {
-            String value = fieldSet.readString(column);
-            return Time.valueOf(value);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    public static Timestamp readSqlTimestamp(FieldSet fieldSet, String column) {
-        try {
-            String value = fieldSet.readString(column);
-            return Timestamp.valueOf(value);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    public static void main(String[] args) throws ParseException {
-        // Create a FieldSet instance for testing
-        String[] tokens = {"101", "John", "10000.50", "true", "2022-01-01", "12:00:00", "2022-01-01 12:00:00"};
-        String[] names = {"id", "name", "salary", "active", "birthdate", "appointmentTime", "timestamp"};
-
-        FieldSet fieldSet = new DefaultFieldSet(tokens, names);
-
-        // Test readValue method
-        System.out.println("Integer: " + readValue(fieldSet, "id"));
-        System.out.println("Double: " + readValue(fieldSet, "salary"));
-        System.out.println("Boolean: " + readValue(fieldSet, "active"));
-        System.out.println("String: " + readValue(fieldSet, "name"));
-        System.out.println("Date: " + readValue(fieldSet, "birthdate"));
-        System.out.println("Time: " + readValue(fieldSet, "appointmentTime"));
-        System.out.println("Timestamp: " + readValue(fieldSet, "timestamp"));
     }
 }
+```
+
+### Step 4: Use Data Type Information in Processor
+
+Modify the `ItemProcessor` to use the array of data type names.
+
+```java
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.file.transform.FieldSet;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class CustomItemProcessor implements ItemProcessor<FieldSet, Map<String, Object>> {
+
+    private final String[] columns;
+    private final String[] dataTypes;
+
+    public CustomItemProcessor(String[] columns, String[] dataTypes) {
+        this.columns = columns;
+        this.dataTypes = dataTypes;
+    }
+
+    @Override
+    public Map<String, Object> process(FieldSet fieldSet) throws Exception {
+        Map<String, Object> item = new HashMap<>();
+
+        for (int i = 0; i < columns.length; i++) {
+            String column = columns[i];
+            String dataType = dataTypes[i];
+            Class<?> columnType = DataTypeConverter.getClassFromTypeName(dataType);
+            item.put(column, FieldSetUtils.readValue(fieldSet, column, columnType));
+        }
+
+        return item;
+    }
+}
+```
+
+### Integration into Batch Configuration
+
+Here's how you can integrate this into your Spring Batch configuration:
+
+```java
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.file.FlatFileItemReader;
+import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
+import org.springframework.batch.item.file.mapping.BeanWrapperFieldSetMapper;
+import org.springframework.batch.item.file.mapping.DefaultLineMapper;
+import org.springframework.batch.item.file.mapping.LineMapper;
+import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.FileSystemResource;
+
+import java.util.Map;
+
+@Configuration
+public class BatchConfiguration {
+
+    private final StepBuilderFactory stepBuilderFactory;
+
+    public BatchConfiguration(StepBuilderFactory stepBuilderFactory) {
+        this.stepBuilderFactory = stepBuilderFactory;
+    }
+
+    @Bean
+    public Step step1() {
+        return stepBuilderFactory.get("step1")
+                .<FieldSet, Map<String, Object>>chunk(10)
+                .reader(reader())
+                .processor(processor())
+                .writer(writer())
+                .build();
+    }
+
+    @Bean
+    public FlatFileItemReader<FieldSet> reader() {
+        return new FlatFileItemReaderBuilder<FieldSet>()
+                .name("fileItemReader")
+                .resource(new FileSystemResource("path/to/your/file.csv"))
+                .lineMapper(lineMapper())
+                .build();
+    }
+
+    private LineMapper<FieldSet> lineMapper() {
+        DefaultLineMapper<FieldSet> lineMapper = new DefaultLineMapper<>();
+
+        DelimitedLineTokenizer lineTokenizer = new DelimitedLineTokenizer();
+        lineTokenizer.setDelimiter(";");
+        lineTokenizer.setStrict(true);
+        lineTokenizer.setNames(columns); // Assuming columns is defined
+
+        BeanWrapperFieldSetMapper<FieldSet> fieldSetMapper = new BeanWrapperFieldSetMapper<>();
+        fieldSetMapper.setTargetType(FieldSet.class);
+
+        lineMapper.setLineTokenizer(lineTokenizer);
+        lineMapper.setFieldSetMapper(fieldSetMapper);
+
+        return lineMapper;
+    }
+
+    @Bean
+    public ItemProcessor<FieldSet, Map<String, Object>> processor() {
+        String[] columns = {"id", "name", "salary", "active", "birthdate", "appointmentTime", "timestamp"};
+        String[] dataTypes = {"Integer", "String", "Double", "Boolean", "Date", "Time", "Timestamp"};
+
+        return new CustomItemProcessor(columns, dataTypes);
+    }
+
+    @Bean
+    public ItemWriter<Map<String, Object>> writer() {
+        return items -> {
+            for (Map<String, Object> item : items) {
+                System.out.println(item);
+            }
+        };
+    }
+}
+```
+
+### Summary
+
+- **Type Mapping**: You use arrays to map column names to their expected data types.
+- **Dynamic Type Handling**: The `readValue` method dynamically reads values based on the specified data types.
+- **Processor Implementation**: The processor uses these mappings to correctly interpret and process each column's value. 
+
+This approach ensures that data type mismatches are handled gracefully and allows the batch job to correctly process various data types as specified in your configuration.
