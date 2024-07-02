@@ -1,214 +1,102 @@
-To implement the `readValue` method based on an array of datatype names corresponding to each column, you need to:
-
-1. **Store Data Type Names**: Use an array of strings where each entry is the name of the data type corresponding to the column.
-2. **Dynamic Type Handling**: Use a method to convert these type names to actual Java classes.
-3. **Read Values Based on Type**: Update the `readValue` method to use this information.
+Sure, let's modify the `lineMapper` and `readValue` methods to take both `columns` and `dataTypes` as parameters, and use the `dataTypes` to read the correct type for each column.
 
 Here is how you can do it:
 
-### Step 1: Store Data Type Names
+### Updated `lineMapper` Method
 
-Assume you have an array of column names and a corresponding array of data type names.
+Update the `lineMapper` method to take an additional `List<String> dataTypes` parameter and pass it to the `readValue` method.
 
 ```java
-String[] columns = {"id", "name", "salary", "active", "birthdate", "appointmentTime", "timestamp"};
-String[] dataTypes = {"Integer", "String", "Double", "Boolean", "Date", "Time", "Timestamp"};
+import org.springframework.batch.item.file.mapping.DefaultLineMapper;
+import org.springframework.batch.item.file.mapping.LineMapper;
+import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
+import org.springframework.batch.item.file.transform.FieldSet;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+private LineMapper<Map<String, Object>> lineMapper(List<String> columns, List<String> dataTypes) {
+    DefaultLineMapper<Map<String, Object>> lineMapper = new DefaultLineMapper<>();
+
+    DelimitedLineTokenizer lineTokenizer = new DelimitedLineTokenizer();
+    lineTokenizer.setDelimiter(batchConfig.getDelimiter()); // Use the delimiter from config
+    lineTokenizer.setStrict(false);
+    lineTokenizer.setNames(columns.toArray(new String[0])); // Set column names dynamically
+
+    lineMapper.setLineTokenizer(lineTokenizer);
+    lineMapper.setFieldSetMapper(fieldSet -> {
+        Map<String, Object> map = new HashMap<>();
+        for (int i = 0; i < columns.size(); i++) {
+            String column = columns.get(i);
+            String dataType = dataTypes.get(i);
+            map.put(column, readValue(fieldSet, column, dataType));
+        }
+        return map;
+    });
+    return lineMapper;
+}
 ```
 
-### Step 2: Convert Data Type Names to Classes
+### Updated `readValue` Method
 
-Create a utility method to convert data type names to actual Java classes.
+Update the `readValue` method to use the `dataType` parameter to read the correct type for each column.
 
 ```java
+import org.springframework.batch.item.file.transform.FieldSet;
+
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
 
-public class DataTypeConverter {
-
-    public static Class<?> getClassFromTypeName(String typeName) {
-        switch (typeName) {
+private Object readValue(FieldSet fieldSet, String column, String columnType) {
+    try {
+        switch (columnType) {
             case "Integer":
-                return Integer.class;
+                return fieldSet.readInt(column);
             case "Double":
-                return Double.class;
+                return fieldSet.readDouble(column);
             case "Boolean":
-                return Boolean.class;
+                return fieldSet.readBoolean(column);
             case "Date":
-                return Date.class;
+                return fieldSet.readDate(column);
             case "Time":
-                return Time.class;
+                return Time.valueOf(fieldSet.readString(column));
             case "Timestamp":
-                return Timestamp.class;
+                return Timestamp.valueOf(fieldSet.readString(column));
             case "String":
             default:
-                return String.class;
-        }
-    }
-}
-```
-
-### Step 3: Update `readValue` Method
-
-Update the `readValue` method to use the data type information.
-
-```java
-import org.springframework.batch.item.file.transform.FieldSet;
-
-public class FieldSetUtils {
-
-    public static Object readValue(FieldSet fieldSet, String column, Class<?> columnType) {
-        try {
-            if (columnType == Integer.class) {
-                return fieldSet.readInt(column);
-            } else if (columnType == Double.class) {
-                return fieldSet.readDouble(column);
-            } else if (columnType == Boolean.class) {
-                return fieldSet.readBoolean(column);
-            } else if (columnType == Date.class) {
-                return fieldSet.readDate(column);
-            } else if (columnType == Time.class) {
-                return Time.valueOf(fieldSet.readString(column));
-            } else if (columnType == Timestamp.class) {
-                return Timestamp.valueOf(fieldSet.readString(column));
-            } else if (columnType == String.class) {
                 return fieldSet.readString(column);
-            } else {
-                throw new IllegalArgumentException("Unsupported column type: " + columnType);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to read value for column: " + column + ", expected type: " + columnType, e);
         }
+    } catch (Exception e) {
+        throw new RuntimeException("Failed to read value for column: " + column + ", expected type: " + columnType, e);
     }
 }
 ```
 
-### Step 4: Use Data Type Information in Processor
+### Integration with `FlatFileItemReader`
 
-Modify the `ItemProcessor` to use the array of data type names.
-
-```java
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.file.transform.FieldSet;
-
-import java.util.HashMap;
-import java.util.Map;
-
-public class CustomItemProcessor implements ItemProcessor<FieldSet, Map<String, Object>> {
-
-    private final String[] columns;
-    private final String[] dataTypes;
-
-    public CustomItemProcessor(String[] columns, String[] dataTypes) {
-        this.columns = columns;
-        this.dataTypes = dataTypes;
-    }
-
-    @Override
-    public Map<String, Object> process(FieldSet fieldSet) throws Exception {
-        Map<String, Object> item = new HashMap<>();
-
-        for (int i = 0; i < columns.length; i++) {
-            String column = columns[i];
-            String dataType = dataTypes[i];
-            Class<?> columnType = DataTypeConverter.getClassFromTypeName(dataType);
-            item.put(column, FieldSetUtils.readValue(fieldSet, column, columnType));
-        }
-
-        return item;
-    }
-}
-```
-
-### Integration into Batch Configuration
-
-Here's how you can integrate this into your Spring Batch configuration:
+Update the `reader` method to pass both `columns` and `dataTypes` to the `lineMapper` method.
 
 ```java
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemWriter;
 import org.springframework.batch.item.file.FlatFileItemReader;
 import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
-import org.springframework.batch.item.file.mapping.BeanWrapperFieldSetMapper;
-import org.springframework.batch.item.file.mapping.DefaultLineMapper;
-import org.springframework.batch.item.file.mapping.LineMapper;
-import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.FileSystemResource;
 
-import java.util.Map;
-
-@Configuration
-public class BatchConfiguration {
-
-    private final StepBuilderFactory stepBuilderFactory;
-
-    public BatchConfiguration(StepBuilderFactory stepBuilderFactory) {
-        this.stepBuilderFactory = stepBuilderFactory;
-    }
-
-    @Bean
-    public Step step1() {
-        return stepBuilderFactory.get("step1")
-                .<FieldSet, Map<String, Object>>chunk(10)
-                .reader(reader())
-                .processor(processor())
-                .writer(writer())
-                .build();
-    }
-
-    @Bean
-    public FlatFileItemReader<FieldSet> reader() {
-        return new FlatFileItemReaderBuilder<FieldSet>()
-                .name("fileItemReader")
-                .resource(new FileSystemResource("path/to/your/file.csv"))
-                .lineMapper(lineMapper())
-                .build();
-    }
-
-    private LineMapper<FieldSet> lineMapper() {
-        DefaultLineMapper<FieldSet> lineMapper = new DefaultLineMapper<>();
-
-        DelimitedLineTokenizer lineTokenizer = new DelimitedLineTokenizer();
-        lineTokenizer.setDelimiter(";");
-        lineTokenizer.setStrict(true);
-        lineTokenizer.setNames(columns); // Assuming columns is defined
-
-        BeanWrapperFieldSetMapper<FieldSet> fieldSetMapper = new BeanWrapperFieldSetMapper<>();
-        fieldSetMapper.setTargetType(FieldSet.class);
-
-        lineMapper.setLineTokenizer(lineTokenizer);
-        lineMapper.setFieldSetMapper(fieldSetMapper);
-
-        return lineMapper;
-    }
-
-    @Bean
-    public ItemProcessor<FieldSet, Map<String, Object>> processor() {
-        String[] columns = {"id", "name", "salary", "active", "birthdate", "appointmentTime", "timestamp"};
-        String[] dataTypes = {"Integer", "String", "Double", "Boolean", "Date", "Time", "Timestamp"};
-
-        return new CustomItemProcessor(columns, dataTypes);
-    }
-
-    @Bean
-    public ItemWriter<Map<String, Object>> writer() {
-        return items -> {
-            for (Map<String, Object> item : items) {
-                System.out.println(item);
-            }
-        };
-    }
+@Bean
+public FlatFileItemReader<Map<String, Object>> reader() {
+    return new FlatFileItemReaderBuilder<Map<String, Object>>()
+            .name("fileItemReader")
+            .resource(new FileSystemResource(batchConfig.getFileName()))
+            .lineMapper(lineMapper(batchConfig.getColumns(), batchConfig.getColumnTypes())) // Pass columns and columnTypes
+            .build();
 }
 ```
 
 ### Summary
 
-- **Type Mapping**: You use arrays to map column names to their expected data types.
-- **Dynamic Type Handling**: The `readValue` method dynamically reads values based on the specified data types.
-- **Processor Implementation**: The processor uses these mappings to correctly interpret and process each column's value. 
+- **Dynamic Column Handling**: The `lineMapper` method is updated to take both column names and column types as parameters.
+- **Type-Specific Value Reading**: The `readValue` method reads values based on the specified data types.
+- **Configuration Integration**: The `FlatFileItemReader` is configured to use these dynamic settings.
 
-This approach ensures that data type mismatches are handled gracefully and allows the batch job to correctly process various data types as specified in your configuration.
+This ensures that your batch job can dynamically handle various input configurations and read values with the correct data types.
