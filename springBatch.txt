@@ -1,217 +1,85 @@
-Handling `BadSqlGrammarException` in Spring Batch involves configuring your batch job to recognize and appropriately deal with SQL grammar errors that occur due to data type mismatches or other SQL issues during the write process. Here's how you can manage these exceptions effectively:
+import org.springframework.batch.item.file.transform.FieldSet;
+import java.sql.Date;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 
-### 1. **Catch and Handle BadSqlGrammarException**
+public class FieldSetUtils {
 
-First, you need to ensure that `BadSqlGrammarException` is caught and handled correctly. You can do this by configuring it in the skip policy or fault-tolerant settings of your step.
+    private static final String DATE_FORMAT = "yyyy-MM-dd";
+    private static final String TIME_FORMAT = "HH:mm:ss";
+    private static final String TIMESTAMP_FORMAT = "yyyy-MM-dd HH:mm:ss";
 
-### 2. **Skip Logic for BadSqlGrammarException**
-
-You can configure your step to skip items that cause `BadSqlGrammarException` and continue processing the rest.
-
-```java
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.core.step.skip.SkipPolicy;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.BadSqlGrammarException;
-
-import java.util.List;
-import java.util.Map;
-
-@Configuration
-public class BatchConfiguration {
-
-    private final StepBuilderFactory stepBuilderFactory;
-
-    public BatchConfiguration(StepBuilderFactory stepBuilderFactory) {
-        this.stepBuilderFactory = stepBuilderFactory;
-    }
-
-    @Bean
-    public Step step1() {
-        return stepBuilderFactory.get("step1")
-                .<Map<String, Object>, Map<String, Object>>chunk(10)
-                .reader(reader())
-                .processor(processor())
-                .writer(writer())
-                .faultTolerant()
-                .skip(BadSqlGrammarException.class) // Skip BadSqlGrammarException
-                .skipLimit(10) // Set your desired skip limit
-                .retry(BadSqlGrammarException.class) // Retry logic if needed
-                .retryLimit(3) // Set your desired retry limit
-                .build();
-    }
-
-    @Bean
-    public FlatFileItemReader<Map<String, Object>> reader() {
-        // Reader implementation
-        return null; // Replace with actual reader implementation
-    }
-
-    @Bean
-    public ItemProcessor<Map<String, Object>, Map<String, Object>> processor() {
-        return new CustomProcessor();
-    }
-
-    @Bean
-    public ItemWriter<Map<String, Object>> writer() {
-        return items -> {
-            // Writing logic
-            for (Map<String, Object> item : items) {
-                System.out.println(item);
-            }
-        };
-    }
-
-    public static class CustomProcessor implements ItemProcessor<Map<String, Object>, Map<String, Object>> {
-        @Override
-        public Map<String, Object> process(Map<String, Object> item) throws Exception {
-            try {
-                // Processing logic
-                if (isValid(item)) {
-                    return item;
-                } else {
-                    // Handle invalid item
-                    return null; // Filter out invalid item
-                }
-            } catch (Exception e) {
-                // Handle exception
-                throw new CustomException("Error processing item", e);
-            }
-        }
-
-        private boolean isValid(Map<String, Object> item) {
-            // Validation logic
-            return true; // Replace with actual validation
-        }
-    }
-
-    public static class CustomException extends RuntimeException {
-        public CustomException(String message) {
-            super(message);
-        }
-
-        public CustomException(String message, Throwable cause) {
-            super(message, cause);
-        }
-    }
-
-    public static class CustomSkipPolicy implements SkipPolicy {
-        @Override
-        public boolean shouldSkip(Throwable t, long skipCount) {
-            // Logic to determine if the exception should be skipped
-            if (t instanceof BadSqlGrammarException && skipCount <= 10) {
-                return true;
-            } else {
-                return false;
-            }
-        }
-    }
-}
-```
-
-### 3. **Custom Skip Policy**
-
-If you need more control over which exceptions are skippable, you can define a custom `SkipPolicy`.
-
-```java
-public class CustomSkipPolicy implements SkipPolicy {
-    @Override
-    public boolean shouldSkip(Throwable t, long skipCount) {
-        // Logic to determine if the exception should be skipped
-        if (t instanceof BadSqlGrammarException && skipCount <= 10) {
-            return true;
-        } else {
-            return false;
-        }
-    }
-}
-```
-
-### 4. **Processor Logic**
-
-Ensure your `ItemProcessor` handles data validation and transformation to mitigate data type mismatches.
-
-```java
-public class CustomProcessor implements ItemProcessor<Map<String, Object>, Map<String, Object>> {
-    @Override
-    public Map<String, Object> process(Map<String, Object> item) throws Exception {
+    public static Object readValue(FieldSet fieldSet, String column) {
         try {
-            // Data validation and transformation logic
-            if (isValid(item)) {
-                return item;
-            } else {
-                // Handle invalid item
-                return null; // Filter out invalid item
+            return fieldSet.readInt(column);
+        } catch (Exception e1) {
+            try {
+                return fieldSet.readDouble(column);
+            } catch (Exception e2) {
+                try {
+                    return fieldSet.readBoolean(column);
+                } catch (Exception e3) {
+                    try {
+                        return fieldSet.readDate(column, DATE_FORMAT);
+                    } catch (Exception e4) {
+                        try {
+                            return fieldSet.readDate(column, TIME_FORMAT);
+                        } catch (Exception e5) {
+                            try {
+                                return fieldSet.readDate(column, TIMESTAMP_FORMAT);
+                            } catch (Exception e6) {
+                                return fieldSet.readString(column);
+                            }
+                        }
+                    }
+                }
             }
-        } catch (Exception e) {
-            // Handle exception
-            throw new CustomException("Error processing item", e);
         }
     }
 
-    private boolean isValid(Map<String, Object> item) {
-        // Validation logic
-        return true; // Replace with actual validation
+    public static Date readSqlDate(FieldSet fieldSet, String column) {
+        try {
+            String value = fieldSet.readString(column);
+            return Date.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    public static Time readSqlTime(FieldSet fieldSet, String column) {
+        try {
+            String value = fieldSet.readString(column);
+            return Time.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    public static Timestamp readSqlTimestamp(FieldSet fieldSet, String column) {
+        try {
+            String value = fieldSet.readString(column);
+            return Timestamp.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    public static void main(String[] args) throws ParseException {
+        // Create a FieldSet instance for testing
+        String[] tokens = {"101", "John", "10000.50", "true", "2022-01-01", "12:00:00", "2022-01-01 12:00:00"};
+        String[] names = {"id", "name", "salary", "active", "birthdate", "appointmentTime", "timestamp"};
+
+        FieldSet fieldSet = new DefaultFieldSet(tokens, names);
+
+        // Test readValue method
+        System.out.println("Integer: " + readValue(fieldSet, "id"));
+        System.out.println("Double: " + readValue(fieldSet, "salary"));
+        System.out.println("Boolean: " + readValue(fieldSet, "active"));
+        System.out.println("String: " + readValue(fieldSet, "name"));
+        System.out.println("Date: " + readValue(fieldSet, "birthdate"));
+        System.out.println("Time: " + readValue(fieldSet, "appointmentTime"));
+        System.out.println("Timestamp: " + readValue(fieldSet, "timestamp"));
     }
 }
-```
-
-### Summary
-
-1. **Skip Logic**: k Configure your step to skip `BadSqlGrammarException` and continue processing.
-2. **Custom Skip Policy**: Define a custom `SkipPolicy` to have more control over which exceptions to skip.
-3. **Processor Validation**: Ensure your processor validates and transforms data to prevent data type mismatches.
-
-By implementing these strategies, you can handle `BadSqlGrammarException` and other SQL-related issues gracefully in your Spring Batch job, ensuring the job continues processing valid data while skipping or retrying problematic items.
-
-
-
-
-
-
-
-
-
-*******************************************
-@Bean
-public Step steps(
-    JobRepository jobRepository,
-    DataSourceTransactionManager transactionManager,
-    ItemReader<Map<String, Object>> reader,
-    ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor,
-    ItemWriter<Map<String, Object>> writer,
-    TaskExecutor taskExecutor
-) throws Exception {
-    return new StepBuilder("jobStep", jobRepository)
-        .<Map<String, Object>, Map<String, Object>>chunk(1, transactionManager)
-        .reader(reader)
-        .processor(itemProcessor)
-        .writer(writer)
-        .taskExecutor(taskExecutor)
-        .faultTolerant()
-        .skip(FlatFileParseException.class)
-        .skip(NumberFormatException.class) // Add more exceptions here
-        .skipLimit(1) // Total number of skips allowed
-        .listener(new SkipListener<Map<String, Object>, Map<String, Object>>() {
-            @Override
-            public void onSkipInRead(Throwable t) {
-                System.out.println("Skipped in read: " + t.getMessage());
-            }
-
-            @Override
-            public void onSkipInWrite(Map<String, Object> item, Throwable t) {
-                System.out.println("Skipped in write: " + item + ", due to: " + t.getMessage());
-            }
-
-            @Override
-            public void onSkipInProcess(Map<String, Object> item, Throwable t) {
-                System.out.println("Skipped in process: " + item + ", due to: " + t.getMessage());
-            }
-        })
-        .build();
-}
-
