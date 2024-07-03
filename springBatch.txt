@@ -1,73 +1,76 @@
 import org.springframework.batch.core.configuration.annotation.StepScope;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
+import org.springframework.batch.item.file.FlatFileItemReader;
+import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DataSourceUtils;
-import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.FileSystemResource;
 
-import javax.sql.DataSource;
+import java.util.List;
 import java.util.Map;
 
-@Component
-@StepScope
-public class CustomItemWriter {
+@Configuration
+public class BatchConfig {
 
     @Bean
-    public ItemWriter<Map<String, Object>> itemWriter(DataSource dataSource, JdbcTemplate jdbcTemplate,
-                                                      @Value("#{jobParameters['dest_table']}") String destTable) {
-        System.out.println("Inside itemWriter: " + destTable);
+    @StepScope
+    public FlatFileItemReader<Map<String, Object>> reader(
+            @Value("#{jobParameters['fileName']}") String fileName,
+            @Value("#{jobParameters['csvColumns']}") List<String> csvColumns,
+            @Value("#{jobParameters['columnsToRead']}") List<String> columnsToRead,
+            @Value("#{jobParameters['dbColumns']}") List<String> dbColumns) {
 
-        // Ensure table exists and is empty
-        ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+        return new FlatFileItemReaderBuilder<Map<String, Object>>()
+                .name("customItemReader")
+                .resource(new FileSystemResource(fileName))
+                .lineMapper(lineMapper(csvColumns, columnsToRead, dbColumns))
+                .build();
+    }
 
-        return items -> {
-            if (items.isEmpty()) {
-                return; // No items to write
+    private LineMapper<Map<String, Object>> lineMapper(List<String> csvColumns, List<String> columnsToRead, List<String> dbColumns) {
+        DefaultLineMapper<Map<String, Object>> lineMapper = new DefaultLineMapper<>();
+
+        DelimitedLineTokenizer lineTokenizer = new DelimitedLineTokenizer();
+        lineTokenizer.setDelimiter(",");
+        lineTokenizer.setStrict(false);
+        lineTokenizer.setNames(csvColumns.toArray(new String[0])); // Use all CSV columns for tokenizing
+
+        lineMapper.setLineTokenizer(lineTokenizer);
+        lineMapper.setFieldSetMapper(fieldSet -> {
+            Map<String, Object> map = new HashMap<>();
+            for (int i = 0; i < columnsToRead.size(); i++) {
+                String columnToRead = columnsToRead.get(i);
+                String dbColumn = dbColumns.get(i);
+                map.put(dbColumn, readValue(fieldSet, columnToRead));
             }
-
-            // Convert the chunk to a list to access the first item
-            Map<String, Object> sampleItem = items.iterator().next();
-            String sql = buildDynamicSql(sampleItem, destTable);
-
-            JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriterBuilder<Map<String, Object>>()
-                    .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
-                    .sql(sql)
-                    .dataSource(dataSource)
-                    .build();
-
-            // Open the writer (necessary because we are manually constructing it)
-            writer.afterPropertiesSet();
-
-            // Write the items
-            writer.write(items);
-        };
+            return map;
+        });
+        return lineMapper;
     }
 
-    private void ensureTableExistsAndIsEmpty(JdbcTemplate jdbcTemplate, String tableName) {
+    private Object readValue(FieldSet fieldSet, String column) {
+        // Add additional checks for data type consistency if needed.
         try {
-            jdbcTemplate.execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
-            System.out.println("Table " + tableName + " exists.");
-        } catch (Exception e) {
-            throw new RuntimeException("Table " + tableName + " does not exist.", e);
-        }
-
-        try {
-            jdbcTemplate.execute("DELETE FROM " + tableName);
-            System.out.println("Table " + tableName + " has been emptied.");
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to empty table " + tableName + ".", e);
+            return fieldSet.readInt(column);
+        } catch (Exception e1) {
+            try {
+                return fieldSet.readDouble(column);
+            } catch (Exception e2) {
+                try {
+                    return fieldSet.readBoolean(column);
+                } catch (Exception e3) {
+                    return fieldSet.readString(column);
+                }
+            }
         }
     }
 
-    private SqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
-        return new MapSqlParameterSource(item);
-    }
-
-    private String buildDynamicSql(Map<String, Object> sampleItem, String destTable) {
-        // Implement the logic to build the SQL insert statement dynamically based on sampleItem and destTable
-        return "INSERT INTO " + destTable + " (" + String.join(", ", sampleItem.keySet()) + ") VALUES (" +
-                sampleItem.keySet().stream().map(key -> ":" + key).collect(Collectors.joining(", ")) + ")";
+    private void validateDataTypes(List<String> dataTypes) {
+        List<String> validDataTypes = List.of("int", "double", "boolean", "string");
+        for (String dataType : dataTypes) {
+            if (!validDataTypes.contains(dataType.toLowerCase())) {
+                throw new IllegalArgumentException("Invalid data type: " + dataType);
+            }
+        }
     }
 }
