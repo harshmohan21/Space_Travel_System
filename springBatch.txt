@@ -1,17 +1,73 @@
-import java.util.Arrays;
-import java.util.List;
+import org.springframework.batch.core.configuration.annotation.StepScope;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.stereotype.Component;
 
-public class BatchConfigValidator {
+import javax.sql.DataSource;
+import java.util.Map;
 
-    private static final List<String> VALID_DATA_TYPES = Arrays.asList(
-            "Integer", "Double", "Boolean", "Date", "Time", "Timestamp", "String"
-    );
+@Component
+@StepScope
+public class CustomItemWriter {
 
-    public static void validateDataTypes(List<String> dataTypes) {
-        for (String dataType : dataTypes) {
-            if (!VALID_DATA_TYPES.contains(dataType)) {
-                throw new IllegalArgumentException("Invalid data type: " + dataType);
+    @Bean
+    public ItemWriter<Map<String, Object>> itemWriter(DataSource dataSource, JdbcTemplate jdbcTemplate,
+                                                      @Value("#{jobParameters['dest_table']}") String destTable) {
+        System.out.println("Inside itemWriter: " + destTable);
+
+        // Ensure table exists and is empty
+        ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+
+        return items -> {
+            if (items.isEmpty()) {
+                return; // No items to write
             }
+
+            // Convert the chunk to a list to access the first item
+            Map<String, Object> sampleItem = items.iterator().next();
+            String sql = buildDynamicSql(sampleItem, destTable);
+
+            JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriterBuilder<Map<String, Object>>()
+                    .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
+                    .sql(sql)
+                    .dataSource(dataSource)
+                    .build();
+
+            // Open the writer (necessary because we are manually constructing it)
+            writer.afterPropertiesSet();
+
+            // Write the items
+            writer.write(items);
+        };
+    }
+
+    private void ensureTableExistsAndIsEmpty(JdbcTemplate jdbcTemplate, String tableName) {
+        try {
+            jdbcTemplate.execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+            System.out.println("Table " + tableName + " exists.");
+        } catch (Exception e) {
+            throw new RuntimeException("Table " + tableName + " does not exist.", e);
         }
+
+        try {
+            jdbcTemplate.execute("DELETE FROM " + tableName);
+            System.out.println("Table " + tableName + " has been emptied.");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to empty table " + tableName + ".", e);
+        }
+    }
+
+    private SqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
+        return new MapSqlParameterSource(item);
+    }
+
+    private String buildDynamicSql(Map<String, Object> sampleItem, String destTable) {
+        // Implement the logic to build the SQL insert statement dynamically based on sampleItem and destTable
+        return "INSERT INTO " + destTable + " (" + String.join(", ", sampleItem.keySet()) + ") VALUES (" +
+                sampleItem.keySet().stream().map(key -> ":" + key).collect(Collectors.joining(", ")) + ")";
     }
 }
