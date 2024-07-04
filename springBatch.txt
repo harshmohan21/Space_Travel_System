@@ -1,54 +1,159 @@
-import org.springframework.batch.item.file.transform.FieldSet;
+Writing test cases for your Spring Batch configuration class involves testing each component such as jobs, steps, readers, processors, and writers. Here’s how you can write unit tests for these components using JUnit and Mockito.
 
-import java.sql.Time;
-import java.sql.Timestamp;
+### Dependencies
+Ensure you have the necessary dependencies in your `pom.xml` or `build.gradle`:
 
-public class BatchConfiguration {
+```xml
+<!-- For Maven -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-test</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.springframework.batch</groupId>
+    <artifactId>spring-batch-test</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.mockito</groupId>
+    <artifactId>mockito-core</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.mockito</groupId>
+    <artifactId>mockito-junit-jupiter</artifactId>
+    <scope>test</scope>
+</dependency>
+```
 
-    private Object readValue(FieldSet fieldSet, String column, String columnType) {
-        try {
-            switch (columnType.toLowerCase()) { // Convert columnType to lowercase for case-insensitive comparison
-                case "integer":
-                    return fieldSet.readInt(column);
-                case "double":
-                    return fieldSet.readDouble(column);
-                case "boolean":
-                    return parseBoolean(fieldSet.readString(column));
-                case "date":
-                    return fieldSet.readDate(column);
-                case "time":
-                    return Time.valueOf(fieldSet.readString(column));
-                case "timestamp":
-                    return Timestamp.valueOf(fieldSet.readString(column));
-                case "string":
-                default:
-                    return fieldSet.readString(column);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to read value for column: " + column + ", expected type: " + columnType, e);
-        }
+### Test Configuration
+Create a test configuration class to mock the dependencies required by your BatchConfig.
+
+```java
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.StepContribution;
+import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.core.step.tasklet.Tasklet;
+import org.springframework.batch.item.ExecutionContext;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemReader;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.test.MetaDataInstanceFactory;
+import org.springframework.batch.test.StepScopeTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+public class BatchConfigTest {
+
+    @Mock
+    private JobRepository jobRepository;
+
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
+    @Mock
+    private ItemReader<Map<String, Object>> itemReader;
+
+    @Mock
+    private ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor;
+
+    @Mock
+    private ItemWriter<Map<String, Object>> itemWriter;
+
+    @InjectMocks
+    private BatchConfig batchConfig;
+
+    @Test
+    void testJobBean() throws Exception {
+        Step step = new StepBuilder("jobStep", jobRepository)
+                .<Map<String, Object>, Map<String, Object>>chunk(10, transactionManager)
+                .reader(itemReader)
+                .processor(itemProcessor)
+                .writer(itemWriter)
+                .build();
+
+        Job job = new JobBuilder("job", jobRepository)
+                .start(step)
+                .build();
+
+        assertNotNull(job);
     }
 
-    private Boolean parseBoolean(String value) {
-        if (value == null) {
+    @Test
+    void testStep() throws Exception {
+        Step step = batchConfig.steps(jobRepository, transactionManager, itemReader, itemProcessor, itemWriter, "true", 1000);
+
+        JobExecution jobExecution = MetaDataInstanceFactory.createJobExecution();
+        ExecutionContext executionContext = jobExecution.getExecutionContext();
+        executionContext.putString("SkipException", "true");
+
+        StepContribution stepContribution = new StepContribution(step, new TransactionTemplate(transactionManager));
+
+        StepScopeTestUtils.doInStepScope(jobExecution, () -> {
+            stepContribution.incrementWriteCount(10);
             return null;
-        }
+        });
 
-        switch (value.trim().toLowerCase()) {
-            case "true":
-            case "yes":
-            case "y":
-            case "1":
-                return true;
-            case "false":
-            case "no":
-            case "n":
-            case "0":
-                return false;
-            default:
-                throw new IllegalArgumentException("Invalid boolean value: " + value);
-        }
+        assertNotNull(step);
     }
 
-    // Other methods and beans for your batch configuration
+    @Test
+    void testReader() throws Exception {
+        Map<String, Object> jobParameters = new HashMap<>();
+        jobParameters.put("jsonFile", "{\"filePath\":\"/path/to/file\",\"dbColumns\":\"col1,col2\",\"delimiter\":\",\",\"SkipException\":\"true\",\"datatype\":\"string,string\",\"fileColumns\":\"fileCol1,fileCol2\",\"requiredColumns\":\"reqCol1,reqCol2\"}");
+
+        when(batchConfig.reader(jobParameters)).thenReturn(itemReader);
+
+        assertNotNull(batchConfig.reader(jobParameters));
+    }
+
+    @Test
+    void testItemProcessor() {
+        ItemProcessor<Map<String, Object>, Map<String, Object>> processor = batchConfig.itemProcessor();
+
+        assertNotNull(processor);
+    }
+
+    @Test
+    void testItemWriter() {
+        Map<String, Object> jobParameters = new HashMap<>();
+        jobParameters.put("dest_table", "table_name");
+
+        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(null, null, "table_name");
+
+        assertNotNull(writer);
+    }
 }
+```
+
+### Explanation
+- **Annotations**:
+  - `@ExtendWith(MockitoExtension.class)`: This annotation is used to initialize Mockito components in the test class.
+  - `@Mock`: Creates a mock implementation for the given class.
+  - `@InjectMocks`: Injects mocks into the annotated class.
+
+- **Test Methods**:
+  - **testJobBean**: Tests the creation of the job bean.
+  - **testStep**: Tests the creation of the step bean.
+  - **testReader**: Tests the reader bean.
+  - **testItemProcessor**: Tests the item processor bean.
+  - **testItemWriter**: Tests the item writer bean.
+
+This setup uses Mockito to mock the dependencies and tests each function to ensure they return the expected results. Adjust the paths and specific details to fit your actual use case.
