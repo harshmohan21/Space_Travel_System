@@ -1,153 +1,54 @@
-To test the `BatchConfiguration` class, you need to set up a Spring context for testing, mock dependencies where necessary, and write the test cases for each component of your batch job. Here's a complete guide to writing tests for your `BatchConfiguration` class:
+import org.springframework.batch.item.file.transform.FieldSet;
 
-### 1. **Add Dependencies**
-Ensure you have the necessary dependencies in your `pom.xml` file:
+import java.sql.Time;
+import java.sql.Timestamp;
 
-```xml
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-test</artifactId>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.springframework.batch</groupId>
-    <artifactId>spring-batch-test</artifactId>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.mockito</groupId>
-    <artifactId>mockito-core</artifactId>
-    <scope>test</scope>
-</dependency>
-```
+public class BatchConfiguration {
 
-### 2. **Create Test Class**
-
-Create a test class named `BatchConfigurationTest` in the `src/test/java` directory:
-
-```java
-package com.example.batch.config;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobParameters;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.core.launch.JobLauncher;
-import org.springframework.batch.test.JobLauncherTestUtils;
-import org.springframework.batch.test.context.SpringBatchTest;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
-
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.Mockito.*;
-
-@ExtendWith(SpringExtension.class)
-@ExtendWith(MockitoExtension.class)
-@SpringBootTest
-@SpringBatchTest
-public class BatchConfigurationTest {
-
-    @Autowired
-    private JobLauncherTestUtils jobLauncherTestUtils;
-
-    @Autowired
-    private JobLauncher jobLauncher;
-
-    @Autowired
-    private StepBuilderFactory stepBuilderFactory;
-
-    @InjectMocks
-    private BatchConfiguration batchConfig;
-
-    @Mock
-    private CustomItemProcessor customItemProcessor;
-
-    @BeforeEach
-    public void setUp() {
-        jobLauncherTestUtils.setJobLauncher(jobLauncher);
+    private Object readValue(FieldSet fieldSet, String column, String columnType) {
+        try {
+            switch (columnType.toLowerCase()) { // Convert columnType to lowercase for case-insensitive comparison
+                case "integer":
+                    return fieldSet.readInt(column);
+                case "double":
+                    return fieldSet.readDouble(column);
+                case "boolean":
+                    return parseBoolean(fieldSet.readString(column));
+                case "date":
+                    return fieldSet.readDate(column);
+                case "time":
+                    return Time.valueOf(fieldSet.readString(column));
+                case "timestamp":
+                    return Timestamp.valueOf(fieldSet.readString(column));
+                case "string":
+                default:
+                    return fieldSet.readString(column);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to read value for column: " + column + ", expected type: " + columnType, e);
+        }
     }
 
-    @Test
-    public void testStep1() throws Exception {
-        Step step = batchConfig.step1();
-        assertNotNull(step);
+    private Boolean parseBoolean(String value) {
+        if (value == null) {
+            return null;
+        }
 
-        JobExecution jobExecution = jobLauncherTestUtils.launchStep("step1");
-        assertEquals("COMPLETED", jobExecution.getExitStatus().getExitCode());
+        switch (value.trim().toLowerCase()) {
+            case "true":
+            case "yes":
+            case "y":
+            case "1":
+                return true;
+            case "false":
+            case "no":
+            case "n":
+            case "0":
+                return false;
+            default:
+                throw new IllegalArgumentException("Invalid boolean value: " + value);
+        }
     }
 
-    @Test
-    public void testReader() throws Exception {
-        FlatFileItemReader<FieldSet> reader = batchConfig.reader();
-        assertNotNull(reader);
-
-        reader.open(new ExecutionContext());
-        FieldSet fieldSet = reader.read();
-        assertNotNull(fieldSet);
-        assertEquals("expected value", fieldSet.readString("name"));
-    }
-
-    @Test
-    public void testProcessor() {
-        ItemProcessor<FieldSet, Map<String, Object>> processor = batchConfig.processor();
-        assertNotNull(processor);
-
-        FieldSet fieldSet = mock(FieldSet.class);
-        when(fieldSet.readString("name")).thenReturn("John Doe");
-
-        Map<String, Object> result = processor.process(fieldSet);
-        assertNotNull(result);
-        assertEquals("John Doe", result.get("name"));
-    }
-
-    @Test
-    public void testWriter() throws Exception {
-        ItemWriter<Map<String, Object>> writer = batchConfig.writer();
-        assertNotNull(writer);
-
-        Map<String, Object> item = Map.of("id", 1, "name", "John Doe");
-        List<Map<String, Object>> items = List.of(item);
-
-        writer.write(items);
-        verify(customItemProcessor, times(1)).process(item);
-    }
+    // Other methods and beans for your batch configuration
 }
-```
-
-### Explanation of the Test Class:
-
-1. **Annotations**:
-    - `@ExtendWith(SpringExtension.class)`: Integrates Spring with JUnit 5.
-    - `@ExtendWith(MockitoExtension.class)`: Integrates Mockito with JUnit 5.
-    - `@SpringBootTest`: Loads the full application context.
-    - `@SpringBatchTest`: Provides utilities for testing Spring Batch jobs and steps.
-
-2. **Mocks and InjectMocks**:
-    - `@Mock`: Mocks the `CustomItemProcessor` and other dependencies.
-    - `@InjectMocks`: Injects mocks into the `BatchConfiguration` instance.
-
-3. **Setup**:
-    - `setUp()`: Initializes the `JobLauncherTestUtils` with the job launcher.
-
-4. **Test Methods**:
-    - `testStep1()`: Tests that the step is created and runs successfully.
-    - `testReader()`: Tests that the reader is properly configured and reads data correctly.
-    - `testProcessor()`: Tests that the processor processes data correctly.
-    - `testWriter()`: Tests that the writer writes data correctly.
-
-5. **Assertions**:
-    - Use assertions to verify that components are not null and that data is processed correctly.
-
-By following this guide, you can effectively test your Spring Batch configuration and ensure that your batch processes work as expected.
