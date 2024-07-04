@@ -1,53 +1,102 @@
-### Slide: Advantages of Using Spring Batch for Batch Processing
+Writing tests for Spring Batch involves several steps, including setting up a test context, creating mock dependencies, and writing the actual test cases. Here’s a guide to help you write tests for your Spring Batch configuration:
 
----
+	1.	Add Dependencies: Ensure you have the necessary dependencies in your pom.xml file for testing:
 
-#### **Title: Why Use Spring Batch for Batch Processing?**
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-test</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.springframework.batch</groupId>
+    <artifactId>spring-batch-test</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.mockito</groupId>
+    <artifactId>mockito-core</artifactId>
+    <scope>test</scope>
+</dependency>
 
----
 
-#### **1. Comprehensive & Robust Framework**
+	2.	Set Up the Test Class: Create a test class for your batch configuration. Use annotations to load the Spring context and enable batch testing.
 
-- Provides built-in support for common batch processing patterns
-- Ensures robustness and reliability with features like transaction management, retry, and skip functionality
+import com.alibou.batch.student.Student;
+import com.alibou.batch.student.StudentRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.test.JobLauncherTestUtils;
+import org.springframework.batch.test.context.SpringBatchTest;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
----
+@ExtendWith(SpringExtension.class)
+@ExtendWith(MockitoExtension.class)
+@SpringBootTest
+@SpringBatchTest
+public class BatchConfigTest {
 
-#### **2. Scalability**
+    @Autowired
+    private JobLauncherTestUtils jobLauncherTestUtils;
 
-- Supports parallel processing and partitioning for high-volume data
-- Easily integrates with other Spring ecosystem tools for scaling
+    @Autowired
+    private Job importStudents;
 
----
+    @Mock
+    private StudentRepository studentRepository;
 
-#### **3. Extensibility**
+    @InjectMocks
+    private BatchConfig batchConfig;
 
-- Highly customizable with its modular architecture
-- Supports custom readers, processors, and writers to fit specific needs
+    @BeforeEach
+    public void setUp() {
+        jobLauncherTestUtils.setJob(importStudents);
+    }
 
----
+    @Test
+    public void testJob() throws Exception {
+        JobExecution jobExecution = jobLauncherTestUtils.launchJob(new JobParameters());
+        assertEquals("COMPLETED", jobExecution.getExitStatus().getExitCode());
+    }
 
-#### **4. Ease of Integration**
+    @Test
+    public void testStep() throws Exception {
+        JobExecution jobExecution = jobLauncherTestUtils.launchStep("csvImport");
+        assertEquals("COMPLETED", jobExecution.getExitStatus().getExitCode());
+    }
 
-- Seamlessly integrates with Spring Framework and Spring Boot
-- Leverages existing Spring features such as dependency injection and configuration management
+    @Test
+    public void testReader() throws Exception {
+        FlatFileItemReader<Student> reader = batchConfig.reader();
+        reader.open(new ExecutionContext());
+        Student student = reader.read();
+        assertNotNull(student);
+        assertEquals("expected value", student.getFirstName());
+    }
+}
 
----
 
-#### **5. Comprehensive Monitoring & Management**
+	3.	Test Configuration: In your BatchConfigTest class, the @SpringBatchTest annotation helps to load the Spring Batch context and provides utilities for testing batch jobs and steps.
+	4.	Mock Dependencies: Use @Mock and @InjectMocks annotations from Mockito to mock your StudentRepository and inject it into your BatchConfig.
+	5.	Testing the Job: Use JobLauncherTestUtils to launch the job and check its status.
+	6.	Testing the Step: Similarly, you can test individual steps by launching them directly.
+	7.	Testing the Reader: Verify that your reader can read data correctly from the CSV file. Ensure the CSV file is placed in the src/test/resources directory and update the FileSystemResource path in your BatchConfig.
+	8.	Assertions: Use assertions to validate the behavior of your batch components. Ensure that the job and steps complete successfully and that the reader reads the expected data.
 
-- Provides detailed logging and monitoring through built-in listeners and metrics
-- Supports job tracking and management via Spring Batch Admin
+Notes:
 
----
+	•	Test Data: Ensure you have appropriate test data in the src/test/resources/students.csv file.
+	•	Execution Context: The ExecutionContext in the reader test is used to simulate the context in which the reader operates.
+	•	Mockito: You can use Mockito to verify interactions with the StudentRepository and to simulate different behaviors for your tests.
 
-#### **6. Wide Community Support & Documentation**
-
-- Backed by a large community and extensive documentation
-- Frequent updates and support from the Spring team
-
----
-
-### **Conclusion:**
-
-Spring Batch offers a powerful, flexible, and scalable solution for batch processing, making it an ideal choice for enterprise applications.
+By following these steps, you can effectively write tests for your Spring Batch configuration and ensure that your batch processes work as expected.
