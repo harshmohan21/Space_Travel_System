@@ -1,34 +1,13 @@
-Writing test cases for your Spring Batch configuration class involves testing each component such as jobs, steps, readers, processors, and writers. Here’s how you can write unit tests for these components using JUnit and Mockito.
+You are correct that for a Spring Boot application, the `@SpringBootTest` annotation is often used to load the full application context. The `@ExtendWith(MockitoExtension.class)` annotation is useful for lightweight testing with Mockito. Depending on what you want to achieve in your tests, you might choose one or the other, or even combine them.
 
-### Dependencies
-Ensure you have the necessary dependencies in your `pom.xml` or `build.gradle`:
+Here’s a more comprehensive approach using `@SpringBootTest` to load the application context and to use Spring's testing support, including `@MockBean` to inject mocks into the Spring context:
 
-```xml
-<!-- For Maven -->
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-test</artifactId>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.springframework.batch</groupId>
-    <artifactId>spring-batch-test</artifactId>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.mockito</groupId>
-    <artifactId>mockito-core</artifactId>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.mockito</groupId>
-    <artifactId>mockito-junit-jupiter</artifactId>
-    <scope>test</scope>
-</dependency>
-```
+### Updated Test Configuration
 
-### Test Configuration
-Create a test configuration class to mock the dependencies required by your BatchConfig.
+1. **Using `@SpringBootTest`**: This annotation will load the full application context, which is useful for integration tests.
+2. **Using `@MockBean`**: This will inject mocks into the Spring application context.
+
+### Revised Test Class
 
 ```java
 import org.junit.jupiter.api.Test;
@@ -39,7 +18,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobExecution;
 import org.springframework.batch.core.Step;
-import org.springframework.batch.core.StepContribution;
+import org.springframework.batch.core.configuration.annotation.JobScope;
+import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
@@ -49,17 +29,24 @@ import org.springframework.batch.item.ItemProcessor;
 import org.springframework.batch.item.ItemReader;
 import org.springframework.batch.item.ItemWriter;
 import org.springframework.batch.test.MetaDataInstanceFactory;
-import org.springframework.batch.test.StepScopeTestUtils;
+import org.springframework.batch.test.context.SpringBatchTest;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.mockito.ArgumentMatchers.any;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.when;
 
-@ExtendWith(MockitoExtension.class)
+@SpringBootTest
+@ExtendWith(SpringExtension.class)
+@SpringBatchTest
 public class BatchConfigTest {
 
     @Mock
@@ -77,7 +64,7 @@ public class BatchConfigTest {
     @Mock
     private ItemWriter<Map<String, Object>> itemWriter;
 
-    @InjectMocks
+    @Autowired
     private BatchConfig batchConfig;
 
     @Test
@@ -104,13 +91,6 @@ public class BatchConfigTest {
         ExecutionContext executionContext = jobExecution.getExecutionContext();
         executionContext.putString("SkipException", "true");
 
-        StepContribution stepContribution = new StepContribution(step, new TransactionTemplate(transactionManager));
-
-        StepScopeTestUtils.doInStepScope(jobExecution, () -> {
-            stepContribution.incrementWriteCount(10);
-            return null;
-        });
-
         assertNotNull(step);
     }
 
@@ -133,10 +113,8 @@ public class BatchConfigTest {
 
     @Test
     void testItemWriter() {
-        Map<String, Object> jobParameters = new HashMap<>();
-        jobParameters.put("dest_table", "table_name");
-
-        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(null, null, "table_name");
+        JdbcTemplate jdbcTemplate = null; // Mock JdbcTemplate or inject a real one if necessary
+        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(null, jdbcTemplate, "table_name");
 
         assertNotNull(writer);
     }
@@ -144,16 +122,20 @@ public class BatchConfigTest {
 ```
 
 ### Explanation
-- **Annotations**:
-  - `@ExtendWith(MockitoExtension.class)`: This annotation is used to initialize Mockito components in the test class.
-  - `@Mock`: Creates a mock implementation for the given class.
-  - `@InjectMocks`: Injects mocks into the annotated class.
 
-- **Test Methods**:
-  - **testJobBean**: Tests the creation of the job bean.
-  - **testStep**: Tests the creation of the step bean.
-  - **testReader**: Tests the reader bean.
-  - **testItemProcessor**: Tests the item processor bean.
-  - **testItemWriter**: Tests the item writer bean.
+- **`@SpringBootTest`**: This annotation is used to load the complete application context, which is suitable for integration tests.
+- **`@ExtendWith(SpringExtension.class)`**: This integrates Spring's testing support with JUnit 5.
+- **`@SpringBatchTest`**: This provides Spring Batch testing utilities.
+- **`@Mock` and `@Autowired`**: We use `@Mock` to mock the dependencies and `@Autowired` to inject the actual `BatchConfig` bean.
 
-This setup uses Mockito to mock the dependencies and tests each function to ensure they return the expected results. Adjust the paths and specific details to fit your actual use case.
+### Running the Tests
+
+To run the tests using Maven, use the following command:
+
+```sh
+mvn test
+```
+
+This command will run all the tests in your `src/test/java` directory, including the `BatchConfigTest` class. The output will display the test results, indicating which tests passed and which failed.
+
+By using `@SpringBootTest`, you are ensuring that your tests run within the context of the Spring application, which is essential for testing configuration classes that rely on Spring's dependency injection and other features.
