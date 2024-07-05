@@ -1,141 +1,90 @@
-You are correct that for a Spring Boot application, the `@SpringBootTest` annotation is often used to load the full application context. The `@ExtendWith(MockitoExtension.class)` annotation is useful for lightweight testing with Mockito. Depending on what you want to achieve in your tests, you might choose one or the other, or even combine them.
+The `site` directory is not created by default when you run `mvn test`. The `site` directory is generated when you build the project site, typically using the `mvn site` command, which compiles reports and documentation for your project.
 
-Here’s a more comprehensive approach using `@SpringBootTest` to load the application context and to use Spring's testing support, including `@MockBean` to inject mocks into the Spring context:
+To generate the `site` directory and the associated reports, follow these steps:
 
-### Updated Test Configuration
+### 1. Add Reporting Plugins to `pom.xml`
 
-1. **Using `@SpringBootTest`**: This annotation will load the full application context, which is useful for integration tests.
-2. **Using `@MockBean`**: This will inject mocks into the Spring application context.
+Ensure your `pom.xml` file has the necessary plugins for generating reports. Here’s an example of what you might include:
 
-### Revised Test Class
+```xml
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
 
-```java
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.JobScope;
-import org.springframework.batch.core.configuration.annotation.StepScope;
-import org.springframework.batch.core.job.builder.JobBuilder;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.core.step.tasklet.Tasklet;
-import org.springframework.batch.item.ExecutionContext;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemReader;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.test.MetaDataInstanceFactory;
-import org.springframework.batch.test.context.SpringBatchTest;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
+    <groupId>com.yourpackage</groupId>
+    <artifactId>your-project</artifactId>
+    <version>1.0-SNAPSHOT</version>
 
-import java.util.HashMap;
-import java.util.Map;
+    <dependencies>
+        <!-- Your dependencies here -->
+    </dependencies>
 
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.Mockito.when;
+    <build>
+        <plugins>
+            <!-- Maven Surefire Plugin for running tests -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.0.0-M5</version>
+            </plugin>
+            <!-- Maven Site Plugin for generating site reports -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-site-plugin</artifactId>
+                <version>3.9.1</version>
+            </plugin>
+            <!-- Maven Javadoc Plugin for generating JavaDoc -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.3.1</version>
+            </plugin>
+        </plugins>
+    </build>
 
-@SpringBootTest
-@ExtendWith(SpringExtension.class)
-@SpringBatchTest
-public class BatchConfigTest {
-
-    @Mock
-    private JobRepository jobRepository;
-
-    @Mock
-    private PlatformTransactionManager transactionManager;
-
-    @Mock
-    private ItemReader<Map<String, Object>> itemReader;
-
-    @Mock
-    private ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor;
-
-    @Mock
-    private ItemWriter<Map<String, Object>> itemWriter;
-
-    @Autowired
-    private BatchConfig batchConfig;
-
-    @Test
-    void testJobBean() throws Exception {
-        Step step = new StepBuilder("jobStep", jobRepository)
-                .<Map<String, Object>, Map<String, Object>>chunk(10, transactionManager)
-                .reader(itemReader)
-                .processor(itemProcessor)
-                .writer(itemWriter)
-                .build();
-
-        Job job = new JobBuilder("job", jobRepository)
-                .start(step)
-                .build();
-
-        assertNotNull(job);
-    }
-
-    @Test
-    void testStep() throws Exception {
-        Step step = batchConfig.steps(jobRepository, transactionManager, itemReader, itemProcessor, itemWriter, "true", 1000);
-
-        JobExecution jobExecution = MetaDataInstanceFactory.createJobExecution();
-        ExecutionContext executionContext = jobExecution.getExecutionContext();
-        executionContext.putString("SkipException", "true");
-
-        assertNotNull(step);
-    }
-
-    @Test
-    void testReader() throws Exception {
-        Map<String, Object> jobParameters = new HashMap<>();
-        jobParameters.put("jsonFile", "{\"filePath\":\"/path/to/file\",\"dbColumns\":\"col1,col2\",\"delimiter\":\",\",\"SkipException\":\"true\",\"datatype\":\"string,string\",\"fileColumns\":\"fileCol1,fileCol2\",\"requiredColumns\":\"reqCol1,reqCol2\"}");
-
-        when(batchConfig.reader(jobParameters)).thenReturn(itemReader);
-
-        assertNotNull(batchConfig.reader(jobParameters));
-    }
-
-    @Test
-    void testItemProcessor() {
-        ItemProcessor<Map<String, Object>, Map<String, Object>> processor = batchConfig.itemProcessor();
-
-        assertNotNull(processor);
-    }
-
-    @Test
-    void testItemWriter() {
-        JdbcTemplate jdbcTemplate = null; // Mock JdbcTemplate or inject a real one if necessary
-        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(null, jdbcTemplate, "table_name");
-
-        assertNotNull(writer);
-    }
-}
+    <reporting>
+        <plugins>
+            <!-- Surefire Report Plugin for test reports -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-report-plugin</artifactId>
+                <version>3.0.0-M5</version>
+            </plugin>
+        </plugins>
+    </reporting>
+</project>
 ```
 
-### Explanation
+### 2. Run `mvn site`
 
-- **`@SpringBootTest`**: This annotation is used to load the complete application context, which is suitable for integration tests.
-- **`@ExtendWith(SpringExtension.class)`**: This integrates Spring's testing support with JUnit 5.
-- **`@SpringBatchTest`**: This provides Spring Batch testing utilities.
-- **`@Mock` and `@Autowired`**: We use `@Mock` to mock the dependencies and `@Autowired` to inject the actual `BatchConfig` bean.
-
-### Running the Tests
-
-To run the tests using Maven, use the following command:
+Execute the following command to generate the site:
 
 ```sh
-mvn test
+mvn site
 ```
 
-This command will run all the tests in your `src/test/java` directory, including the `BatchConfigTest` class. The output will display the test results, indicating which tests passed and which failed.
+This command will generate the `site` directory inside the `target` directory, containing various reports including the Surefire test reports.
 
-By using `@SpringBootTest`, you are ensuring that your tests run within the context of the Spring application, which is essential for testing configuration classes that rely on Spring's dependency injection and other features.
+### 3. View the Site
+
+After running `mvn site`, navigate to the `target/site` directory. You’ll find an `index.html` file which you can open in a web browser to view the project site and the various reports generated.
+
+### Directory Structure
+
+After running `mvn site`, your project directory structure will look something like this:
+
+```
+your-project/
+|-- target/
+|   |-- site/
+|   |   |-- index.html
+|   |   |-- surefire-report.html
+|   |   |-- other reports and resources...
+```
+
+### Detailed Reports
+
+The `surefire-report.html` will contain detailed reports of the test cases, including which tests passed, failed, and the execution time for each test.
+
+By using `mvn site`, you not only generate the `site` directory but also create a comprehensive set of reports that can help you understand the state of your project, including test results, code coverage, and documentation.
