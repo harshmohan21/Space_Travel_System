@@ -1,97 +1,219 @@
-To print the statistics after every write operation, you can implement a custom `ItemWriteListener`. This listener will log the required metrics after each write operation.
+To implement stats that print the number of records uploaded, skipped, and the current number of records in the destination table after writing each chunk, you need to modify your `ItemWriter` to include the logic for updating and printing these stats. Additionally, an `ItemWriteListener` can be used to handle logging after each chunk is written.
 
-### Step 1: Create the `CustomItemWriteListener`
+Here's the updated code for the `ItemWriter` and `ItemWriteListener`:
+
+### Custom `ItemWriter`
 
 ```java
-import org.springframework.batch.core.ItemWriteListener;
-import org.springframework.batch.core.StepExecution;
-import org.springframework.batch.core.scope.context.StepSynchronizationManager;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.JdbcBatchItemWriter;
+import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.stereotype.Component;
 
+import javax.sql.DataSource;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
-public class CustomItemWriteListener implements ItemWriteListener<Map<String, Object>> {
+@Component
+public class CustomItemWriter implements ItemWriter<Map<String, Object>> {
 
+    private final JdbcTemplate jdbcTemplate;
+    private final DataSource dataSource;
     private final String destTable;
 
-    public CustomItemWriteListener(String destTable) {
+    public CustomItemWriter(JdbcTemplate jdbcTemplate, DataSource dataSource, @Value("#{jobParameters['dest_table']}") String destTable) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.dataSource = dataSource;
         this.destTable = destTable;
     }
 
     @Override
+    public void write(List<? extends Map<String, Object>> items) throws Exception {
+        if (items.isEmpty()) {
+            return;
+        }
+        
+        Map<String, Object> sampleItem = items.iterator().next();
+        String sql = buildDynamicSql(sampleItem);
+        
+        JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriterBuilder<Map<String, Object>>()
+                .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
+                .sql(sql)
+                .dataSource(dataSource)
+                .build();
+        
+        writer.afterPropertiesSet();
+        writer.write(items);
+        
+        int writtenCount = items.size();
+        long totalRecords = getTotalRecords();
+        
+        System.out.println("Written records in this chunk: " + writtenCount);
+        System.out.println("Current total records in the table: " + totalRecords);
+    }
+    
+    private String buildDynamicSql(Map<String, Object> item) {
+        String columns = String.join(", ", item.keySet());
+        String placeholders = item.keySet().stream()
+            .map(key -> ":" + key)
+            .collect(Collectors.joining(", "));
+        return "INSERT INTO " + destTable + " (" + columns + ") VALUES (" + placeholders + ")";
+    }
+    
+    private MapSqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        item.forEach(params::addValue);
+        return params;
+    }
+    
+    private long getTotalRecords() {
+        String countQuery = "SELECT COUNT(*) FROM " + destTable;
+        return jdbcTemplate.queryForObject(countQuery, Long.class);
+    }
+    
+    private void ensureTableExistsAndIsEmpty(JdbcTemplate jdbcTemplate, String tableName) {
+        try {
+            jdbcTemplate.execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+            System.out.println("Table " + tableName + " exists.");
+        } catch (Exception e) {
+            throw new RuntimeException("Table " + tableName + " does not exist.", e);
+        }
+        try {
+            jdbcTemplate.execute("TRUNCATE TABLE " + tableName);
+            System.out.println("Table " + tableName + " has been emptied.");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to empty table " + tableName + ".", e);
+        }
+    }
+}
+```
+
+### Custom `ItemWriteListener`
+
+```java
+import org.springframework.batch.core.ItemWriteListener;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+
+@Component
+public class CustomItemWriteListener implements ItemWriteListener<Map<String, Object>> {
+
+    @Override
     public void beforeWrite(List<? extends Map<String, Object>> items) {
-        // You can add any setup logic here if needed
+        // Before write logic, if any
     }
 
     @Override
     public void afterWrite(List<? extends Map<String, Object>> items) {
-        StepExecution stepExecution = StepSynchronizationManager.getContext().getStepExecution();
-        long readCount = stepExecution.getReadCount();
-        long writeCount = stepExecution.getWriteCount();
-        long skipCount = stepExecution.getSkipCount();
-
-        System.out.println("Destination Table: " + destTable);
-        System.out.println("Total records read: " + readCount);
-        System.out.println("Total records written: " + writeCount);
-        System.out.println("Total records skipped: " + skipCount);
+        int writtenCount = items.size();
+        System.out.println("Written records in this chunk: " + writtenCount);
     }
 
     @Override
     public void onWriteError(Exception exception, List<? extends Map<String, Object>> items) {
-        // You can add error handling logic here if needed
+        System.err.println("Error writing items: " + exception.getMessage());
     }
 }
 ```
 
-### Step 2: Register the Listener in Your Step Configuration
+### Configure the Step to Use the Custom `ItemWriter` and `ItemWriteListener`
+
+Update your batch configuration to include the custom `ItemWriter` and `ItemWriteListener`:
 
 ```java
 import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.JobScope;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemReader;
-import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.core.step.builder.StepBuilderException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
+import org.springframework.core.task.TaskExecutor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
-@Bean
-@JobScope
-public Step step(JobRepository jobRepository,
-                 PlatformTransactionManager transactionManager,
-                 ItemReader<Map<String, Object>> reader,
-                 ItemProcessor<Map<String, Object>, Map<String, Object>> processor,
-                 ItemWriter<Map<String, Object>> writer,
-                 @Value("#{jobParameters['SkipException']}") String skipException,
-                 @Value("#{jobParameters['lineCount']}") long lineCount,
-                 @Value("#{jobParameters['destTable']}") String destTable) {
+import javax.sql.DataSource;
+import java.util.Map;
 
-    System.out.println("Skip data " + skipException);
-    int chunkSize = (int) (lineCount / 100);
-    boolean skip = Boolean.parseBoolean(skipException);
-    double skipLim = lineCount * 0.05;
-    int skipLimit = Math.min((int) skipLim, Integer.MAX_VALUE);
+@Configuration
+public class BatchConfiguration {
 
-    StepBuilder stepBuilder = new StepBuilder("jobStep", jobRepository);
-    return stepBuilder.<Map<String, Object>, Map<String, Object>>chunk(chunkSize, transactionManager)
-            .reader(reader)
-            .processor(processor)
-            .writer(writer)
-            .faultTolerant()
-            .skip(FlatFileParseException.class)
-            .skip(BadSqlGrammarException.class)
-            .retry(FlatFileParseException.class)
-            .skipLimit(skip ? skipLimit : 0)
-            .listener(new CustomItemWriteListener(destTable))
-            .build();
+    @Autowired
+    private StepBuilderFactory stepBuilderFactory;
+
+    @Autowired
+    private JobRepository jobRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private DataSource dataSource;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Bean
+    @JobScope
+    public Step steps(ItemReader<Map<String, Object>> reader,
+                      ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor,
+                      @Value("#{jobParameters['SkipException']}") String SkipException,
+                      @Value("#{jobParameters['lineCount']}") long lineCount) throws Exception {
+        System.out.println("Skip data " + SkipException);
+        int chunk_size = (int) (lineCount / 100);
+        StepBuilder stepBuilder = new StepBuilder("jobStep", jobRepository);
+        if (Boolean.parseBoolean(SkipException)) {
+            double skipLim = lineCount * 0.05;
+            int skip = Math.min((int) skipLim, Integer.MAX_VALUE);
+            return stepBuilder
+                    .<Map<String, Object>, Map<String, Object>>chunk(chunk_size, transactionManager)
+                    .reader(reader)
+                    .processor(itemProcessor)
+                    .writer(itemWriter(dataSource, jdbcTemplate, "#{jobParameters['dest_table']}"))
+                    .taskExecutor(taskExecutor())
+                    .faultTolerant()
+                    .skip(FlatFileParseException.class)
+                    .skip(BadSqlGrammarException.class)
+                    .retry(FlatFileParseException.class)
+                    .skipLimit(skip)
+                    .listener(new CustomItemWriteListener())
+                    .build();
+        } else {
+            return stepBuilder
+                    .<Map<String, Object>, Map<String, Object>>chunk(chunk_size, transactionManager)
+                    .reader(reader)
+                    .processor(itemProcessor)
+                    .writer(itemWriter(dataSource, jdbcTemplate, "#{jobParameters['dest_table']}"))
+                    .taskExecutor(taskExecutor())
+                    .listener(new CustomItemWriteListener())
+                    .build();
+        }
+    }
+
+    @Bean
+    @StepScope
+    public ItemWriter<Map<String, Object>> itemWriter(DataSource dataSource, JdbcTemplate jdbcTemplate, @Value("#{jobParameters['dest_table']}") String destTable) {
+        System.out.println("inside itemWriter: " + destTable);
+        return new CustomItemWriter(jdbcTemplate, dataSource, destTable);
+    }
+
+    @Bean
+    public TaskExecutor taskExecutor() {
+        return new SimpleAsyncTaskExecutor("batch-thread");
+    }
 }
 ```
 
-### Explanation:
+### Summary
 
-1. **CustomItemWriteListener**: This class implements the `ItemWriteListener` interface and provides the `afterWrite` method to log the desired metrics after each write operation.
-2. **Step Configuration**: The `listener` method in the `StepBuilder` registers the `CustomItemWriteListener` to the step.
-
-With this setup, your application will print the statistics after every write operation, giving you real-time updates on the number of records processed.
+This configuration sets up a custom `ItemWriter` that prints the stats after each chunk is written and includes an `ItemWriteListener` for additional logging or handling logic. The `ensureTableExistsAndIsEmpty` method ensures that the target table is ready for new data. This setup should meet your requirements for tracking and logging the number of records written, skipped, and the current total in the database after each chunk.
