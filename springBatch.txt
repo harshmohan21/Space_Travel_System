@@ -1,90 +1,26 @@
-The `site` directory is not created by default when you run `mvn test`. The `site` directory is generated when you build the project site, typically using the `mvn site` command, which compiles reports and documentation for your project.
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.core.listener.StepExecutionListenerSupport;
+import org.springframework.jdbc.core.JdbcTemplate;
 
-To generate the `site` directory and the associated reports, follow these steps:
+public class ChunkStatisticsListener extends StepExecutionListenerSupport {
 
-### 1. Add Reporting Plugins to `pom.xml`
+    private final JdbcTemplate jdbcTemplate;
 
-Ensure your `pom.xml` file has the necessary plugins for generating reports. Here’s an example of what you might include:
+    public ChunkStatisticsListener(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
 
-```xml
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
+    @Override
+    public void afterChunk(StepExecution stepExecution) {
+        // Fetch the total count of records in the database table
+        String tableName = "your_table_name"; // Replace with your actual table name
+        int totalCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + tableName, Integer.class);
 
-    <groupId>com.yourpackage</groupId>
-    <artifactId>your-project</artifactId>
-    <version>1.0-SNAPSHOT</version>
+        // Fetch the count of records written in the current chunk
+        int chunkCount = stepExecution.getWriteCount();
 
-    <dependencies>
-        <!-- Your dependencies here -->
-    </dependencies>
-
-    <build>
-        <plugins>
-            <!-- Maven Surefire Plugin for running tests -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.0.0-M5</version>
-            </plugin>
-            <!-- Maven Site Plugin for generating site reports -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-site-plugin</artifactId>
-                <version>3.9.1</version>
-            </plugin>
-            <!-- Maven Javadoc Plugin for generating JavaDoc -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-javadoc-plugin</artifactId>
-                <version>3.3.1</version>
-            </plugin>
-        </plugins>
-    </build>
-
-    <reporting>
-        <plugins>
-            <!-- Surefire Report Plugin for test reports -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-report-plugin</artifactId>
-                <version>3.0.0-M5</version>
-            </plugin>
-        </plugins>
-    </reporting>
-</project>
-```
-
-### 2. Run `mvn site`
-
-Execute the following command to generate the site:
-
-```sh
-mvn site
-```
-
-This command will generate the `site` directory inside the `target` directory, containing various reports including the Surefire test reports.
-
-### 3. View the Site
-
-After running `mvn site`, navigate to the `target/site` directory. You’ll find an `index.html` file which you can open in a web browser to view the project site and the various reports generated.
-
-### Directory Structure
-
-After running `mvn site`, your project directory structure will look something like this:
-
-```
-your-project/
-|-- target/
-|   |-- site/
-|   |   |-- index.html
-|   |   |-- surefire-report.html
-|   |   |-- other reports and resources...
-```
-
-### Detailed Reports
-
-The `surefire-report.html` will contain detailed reports of the test cases, including which tests passed, failed, and the execution time for each test.
-
-By using `mvn site`, you not only generate the `site` directory but also create a comprehensive set of reports that can help you understand the state of your project, including test results, code coverage, and documentation.
+        // Log the statistics
+        System.out.println("Records written in this chunk: " + chunkCount);
+        System.out.println("Total records in the table: " + totalCount);
+    }
+}
