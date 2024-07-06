@@ -1,26 +1,31 @@
-You are correct. In recent versions of Spring Batch, you should use the `StepExecutionListener` interface directly instead of `StepExecutionListenerSupport`. Here's an updated version of the solution using the `StepExecutionListener` interface:
+To print the statistics after every write operation, you can implement a custom `ItemWriteListener`. This listener will log the required metrics after each write operation.
 
-### Step 1: Create the `StepExecutionListener`
+### Step 1: Create the `CustomItemWriteListener`
 
 ```java
+import org.springframework.batch.core.ItemWriteListener;
 import org.springframework.batch.core.StepExecution;
-import org.springframework.batch.core.StepExecutionListener;
+import org.springframework.batch.core.scope.context.StepSynchronizationManager;
 
-public class CustomStepExecutionListener implements StepExecutionListener {
+import java.util.List;
+import java.util.Map;
+
+public class CustomItemWriteListener implements ItemWriteListener<Map<String, Object>> {
 
     private final String destTable;
 
-    public CustomStepExecutionListener(String destTable) {
+    public CustomItemWriteListener(String destTable) {
         this.destTable = destTable;
     }
 
     @Override
-    public void beforeStep(StepExecution stepExecution) {
+    public void beforeWrite(List<? extends Map<String, Object>> items) {
         // You can add any setup logic here if needed
     }
 
     @Override
-    public ExitStatus afterStep(StepExecution stepExecution) {
+    public void afterWrite(List<? extends Map<String, Object>> items) {
+        StepExecution stepExecution = StepSynchronizationManager.getContext().getStepExecution();
         long readCount = stepExecution.getReadCount();
         long writeCount = stepExecution.getWriteCount();
         long skipCount = stepExecution.getSkipCount();
@@ -29,8 +34,11 @@ public class CustomStepExecutionListener implements StepExecutionListener {
         System.out.println("Total records read: " + readCount);
         System.out.println("Total records written: " + writeCount);
         System.out.println("Total records skipped: " + skipCount);
+    }
 
-        return stepExecution.getExitStatus();
+    @Override
+    public void onWriteError(Exception exception, List<? extends Map<String, Object>> items) {
+        // You can add error handling logic here if needed
     }
 }
 ```
@@ -76,14 +84,14 @@ public Step step(JobRepository jobRepository,
             .skip(BadSqlGrammarException.class)
             .retry(FlatFileParseException.class)
             .skipLimit(skip ? skipLimit : 0)
-            .listener(new CustomStepExecutionListener(destTable))
+            .listener(new CustomItemWriteListener(destTable))
             .build();
 }
 ```
 
 ### Explanation:
 
-1. **CustomStepExecutionListener**: This class implements the `StepExecutionListener` interface directly, providing the `beforeStep` and `afterStep` methods. The `afterStep` method logs the desired metrics.
-2. **Step Configuration**: The `listener` method in the `StepBuilder` registers the `CustomStepExecutionListener` to the step.
+1. **CustomItemWriteListener**: This class implements the `ItemWriteListener` interface and provides the `afterWrite` method to log the desired metrics after each write operation.
+2. **Step Configuration**: The `listener` method in the `StepBuilder` registers the `CustomItemWriteListener` to the step.
 
-This approach ensures compatibility with the latest Spring Batch versions while providing the desired logging functionality for your step execution.
+With this setup, your application will print the statistics after every write operation, giving you real-time updates on the number of records processed.
