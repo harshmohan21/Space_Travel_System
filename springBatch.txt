@@ -1,26 +1,28 @@
-You are correct. In recent versions of Spring Batch, you should use the `StepExecutionListener` interface directly instead of `StepExecutionListenerSupport`. Here's an updated version of the solution using the `StepExecutionListener` interface:
+To achieve printing statistics after every chunk is written, you can utilize the `ChunkListener` interface in Spring Batch. The `ChunkListener` allows you to listen to events before and after the processing of each chunk. Here's how you can implement and integrate a custom `ChunkListener` to print the statistics after each chunk is written:
 
-### Step 1: Create the `StepExecutionListener`
+1. **Create a CustomChunkListener:**
 
 ```java
+import org.springframework.batch.core.ChunkListener;
+import org.springframework.batch.core.scope.context.ChunkContext;
 import org.springframework.batch.core.StepExecution;
-import org.springframework.batch.core.StepExecutionListener;
 
-public class CustomStepExecutionListener implements StepExecutionListener {
+public class CustomChunkListener implements ChunkListener {
 
     private final String destTable;
 
-    public CustomStepExecutionListener(String destTable) {
+    public CustomChunkListener(String destTable) {
         this.destTable = destTable;
     }
 
     @Override
-    public void beforeStep(StepExecution stepExecution) {
+    public void beforeChunk(ChunkContext context) {
         // You can add any setup logic here if needed
     }
 
     @Override
-    public ExitStatus afterStep(StepExecution stepExecution) {
+    public void afterChunk(ChunkContext context) {
+        StepExecution stepExecution = context.getStepContext().getStepExecution();
         long readCount = stepExecution.getReadCount();
         long writeCount = stepExecution.getWriteCount();
         long skipCount = stepExecution.getSkipCount();
@@ -29,13 +31,16 @@ public class CustomStepExecutionListener implements StepExecutionListener {
         System.out.println("Total records read: " + readCount);
         System.out.println("Total records written: " + writeCount);
         System.out.println("Total records skipped: " + skipCount);
+    }
 
-        return stepExecution.getExitStatus();
+    @Override
+    public void afterChunkError(ChunkContext context) {
+        // You can add any error handling logic here if needed
     }
 }
 ```
 
-### Step 2: Register the Listener in Your Step Configuration
+2. **Integrate CustomChunkListener in Your Step Configuration:**
 
 ```java
 import org.springframework.batch.core.Step;
@@ -77,13 +82,9 @@ public Step step(JobRepository jobRepository,
             .retry(FlatFileParseException.class)
             .skipLimit(skip ? skipLimit : 0)
             .listener(new CustomStepExecutionListener(destTable))
+            .listener(new CustomChunkListener(destTable))
             .build();
 }
 ```
 
-### Explanation:
-
-1. **CustomStepExecutionListener**: This class implements the `StepExecutionListener` interface directly, providing the `beforeStep` and `afterStep` methods. The `afterStep` method logs the desired metrics.
-2. **Step Configuration**: The `listener` method in the `StepBuilder` registers the `CustomStepExecutionListener` to the step.
-
-This approach ensures compatibility with the latest Spring Batch versions while providing the desired logging functionality for your step execution.
+By adding the `CustomChunkListener` to the step configuration, the `afterChunk` method will be called after every chunk is processed, printing the statistics as required.
