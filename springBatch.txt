@@ -1,17 +1,43 @@
+import org.springframework.batch.core.listener.ChunkListenerSupport;
 import org.springframework.batch.core.StepExecution;
-import org.springframework.batch.core.listener.StepExecutionListenerSupport;
+import org.springframework.batch.core.annotation.AfterChunk;
+import org.springframework.batch.core.scope.context.ChunkContext;
+import org.springframework.batch.core.listener.annotation.AfterStep;
+import org.springframework.batch.core.listener.annotation.BeforeStep;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
 
-public class ChunkStatisticsListener extends StepExecutionListenerSupport {
+@Component
+public class ChunkStatisticsListener implements StepExecutionListener, ChunkListener {
 
     private final JdbcTemplate jdbcTemplate;
+    private StepExecution stepExecution;
 
     public ChunkStatisticsListener(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 
     @Override
-    public void afterChunk(StepExecution stepExecution) {
+    @BeforeStep
+    public void beforeStep(StepExecution stepExecution) {
+        this.stepExecution = stepExecution;
+    }
+
+    @Override
+    @AfterStep
+    public ExitStatus afterStep(StepExecution stepExecution) {
+        // Optional: add logic for after the step is complete
+        return stepExecution.getExitStatus();
+    }
+
+    @Override
+    public void beforeChunk(ChunkContext context) {
+        // Optional: add logic for before a chunk is processed
+    }
+
+    @Override
+    @AfterChunk
+    public void afterChunk(ChunkContext context) {
         // Fetch the total count of records in the database table
         String tableName = "your_table_name"; // Replace with your actual table name
         int totalCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + tableName, Integer.class);
@@ -22,5 +48,10 @@ public class ChunkStatisticsListener extends StepExecutionListenerSupport {
         // Log the statistics
         System.out.println("Records written in this chunk: " + chunkCount);
         System.out.println("Total records in the table: " + totalCount);
+    }
+
+    @Override
+    public void afterChunkError(ChunkContext context) {
+        // Optional: add logic for handling errors after a chunk
     }
 }
