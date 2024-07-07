@@ -1,8 +1,6 @@
-To check if an entire record (all columns) is a duplicate, you can modify the `CustomItemProcessor` to compare all relevant columns against the database records. This involves creating a query that checks for the existence of a record with the same values for each column.
+Certainly! Here's how you can modify the `CustomItemProcessor` to use the `List<String>` columns and the provided processor method:
 
-Here's how you can achieve that:
-
-1. **Update the CustomItemProcessor:**
+1. **Implement the CustomItemProcessor:**
 
 ```java
 import org.springframework.batch.item.ItemProcessor;
@@ -47,12 +45,58 @@ public class CustomItemProcessor implements ItemProcessor<Map<String, Object>, M
         return item;
     }
 }
-
 ```
 
-2. **Update Your Step Configuration:**
+2. **Modify the Processor Method to Use the CustomItemProcessor:**
 
-Modify the step configuration to pass the columns to the `CustomItemProcessor`:
+```java
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+@Component
+public class BatchProcessorConfig {
+
+    private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
+
+    public BatchProcessorConfig(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.objectMapper = objectMapper;
+    }
+
+    @Bean
+    public ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor(@Value("#{jobParameters}") Map<String, Object> jobParameters) throws Exception {
+        System.out.println("inside itemProcessor");
+
+        String input = (String) jobParameters.get("jsonFile");
+        ObjectNode obj = (ObjectNode) objectMapper.readTree(input);
+        JsonNode dbColumns = obj.get("dbColumns");
+
+        List<String> columnNames = ListGen(dbColumns);
+        String destTable = obj.get("destTable").asText();
+
+        return new CustomItemProcessor(jdbcTemplate, destTable, columnNames);
+    }
+
+    private List<String> ListGen(JsonNode dbColumns) {
+        List<String> columns = new ArrayList<>();
+        dbColumns.forEach(column -> columns.add(column.asText()));
+        return columns;
+    }
+}
+```
+
+3. **Update Your Step Configuration to Use the Custom Item Processor:**
 
 ```java
 import org.springframework.batch.core.Step;
@@ -85,12 +129,10 @@ public Step step(JobRepository jobRepository,
     double skipLim = lineCount * 0.05;
     int skipLimit = Math.min((int) skipLim, Integer.MAX_VALUE);
 
-    String[] columns = {"column1", "column2", "column3"}; // Replace with your actual column names
-
     StepBuilder stepBuilder = new StepBuilder("jobStep", jobRepository);
     return stepBuilder.<Map<String, Object>, Map<String, Object>>chunk(chunkSize, transactionManager)
             .reader(reader)
-            .processor(new CustomItemProcessor(jdbcTemplate, destTable, columns)) // Use the custom processor
+            .processor(processor) // Use the custom processor
             .writer(writer)
             .faultTolerant()
             .skip(FlatFileParseException.class)
@@ -103,36 +145,4 @@ public Step step(JobRepository jobRepository,
 }
 ```
 
-3. **Ensure Required Beans and Dependencies:**
-
-Make sure you have the required beans and dependencies in your Spring configuration:
-
-```java
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
-
-import javax.sql.DataSource;
-
-@Configuration
-public class BatchConfiguration {
-
-    @Bean
-    public DataSource dataSource() {
-        DriverManagerDataSource dataSource = new DriverManagerDataSource();
-        dataSource.setDriverClassName("com.mysql.cj.jdbc.Driver");
-        dataSource.setUrl("jdbc:mysql://localhost:3306/yourdatabase");
-        dataSource.setUsername("yourusername");
-        dataSource.setPassword("yourpassword");
-        return dataSource;
-    }
-
-    @Bean
-    public JdbcTemplate jdbcTemplate(DataSource dataSource) {
-        return new JdbcTemplate(dataSource);
-    }
-}
-```
-
-By passing an array of column names to the `CustomItemProcessor`, you can dynamically build a query that checks if all column values match for a record. If the record exists, the processor returns `null`, effectively skipping the record during the batch processing.
+With these changes, your `CustomItemProcessor` will check for duplicate records based on all specified columns and skip any duplicates. The `itemProcessor` method in `BatchProcessorConfig` sets up the processor with the necessary parameters extracted from the job parameters.
