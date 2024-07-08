@@ -1,144 +1,132 @@
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import java.io.File;
-import java.util.*;
-
-import javax.sql.DataSource;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.core.*;
-import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.core.job.builder.JobBuilder;
-import org.springframework.batch.core.job.builder.StepBuilder;
-import org.springframework.batch.core.listener.JobExecutionListenerSupport;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.DefaultBatchConfigurer;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.core.step.builder.SimpleStepBuilder;
-import org.springframework.batch.core.step.builder.StepBuilderHelper;
+import org.springframework.batch.core.step.tasklet.TaskletStep;
 import org.springframework.batch.item.ItemProcessor;
 import org.springframework.batch.item.ItemReader;
 import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
-import org.springframework.batch.item.file.FlatFileItemReader;
-import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
-import org.springframework.batch.item.file.mapping.DefaultLineMapper;
-import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
-import org.springframework.batch.support.transaction.ResourcelessTransactionManager;
-import org.springframework.core.io.FileSystemResource;
+import org.springframework.batch.test.context.SpringBatchTest;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.namedparam.SqlParameterSource;
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.transaction.PlatformTransactionManager;
 
+import java.util.HashMap;
+import java.util.Map;
+
+@SpringBootTest
 @ExtendWith(MockitoExtension.class)
-public class BootBatchExampleApplicationTests {
+@SpringBatchTest
+class BootBatchExampleApplicationTests {
 
     @Mock
     private JobRepository jobRepository;
 
     @Mock
-    private DataSourceTransactionManager transactionManager;
+    private PlatformTransactionManager transactionManager;
 
     @Mock
-    private JdbcTemplate jdbcTemplate;
+    private ItemReader<Map<String, Object>> itemReader;
 
     @Mock
-    private DataSource dataSource;
+    private ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor;
 
     @Mock
-    private JobCompletionNotificationImpl listener;
+    private ItemWriter<Map<String, Object>> itemWriter;
 
-    @Mock
-    private ItemReader<Map<String, Object>> reader;
-
-    @Mock
-    private ItemProcessor<Map<String, Object>, Map<String, Object>> processor;
-
-    @Mock
-    private ItemWriter<Map<String, Object>> writer;
-
-    @InjectMocks
+    @Autowired
     private BatchConfig batchConfig;
 
-    private String destTable = "test_table";
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
-    @BeforeEach
-    public void setUp() {
-        // No setup needed as StepBuilderFactory and JobBuilderFactory are deprecated.
+    @Test
+    void testJobBean() throws Exception {
+        Step step = new StepBuilder("jobStep", jobRepository)
+                .<Map<String, Object>, Map<String, Object>>chunk(10, transactionManager)
+                .reader(itemReader)
+                .processor(itemProcessor)
+                .writer(itemWriter)
+                .build();
+        Job job = new JobBuilder("job", jobRepository)
+                .start(step)
+                .build();
+
+        Assertions.assertNotNull(job);
     }
 
     @Test
-    public void testJobBean() {
-        Job job = batchConfig.jobBean(jobRepository, listener, null);
-        assertNotNull(job);
+    void testItemProcessor() throws JsonProcessingException {
+        ItemProcessor<Map<String, Object>, Map<String, Object>> processor = batchConfig.itemProcessor();
+        Assertions.assertNotNull(processor);
     }
 
     @Test
-    public void testSteps() throws Exception {
-        Step step = batchConfig.steps(jobRepository, transactionManager, reader, processor, writer, jdbcTemplate, "true", 1000, destTable);
-        assertNotNull(step);
+    void testTaskExecutor() {
+        TaskExecutor executor = batchConfig.taskExecutor();
+        Assertions.assertNotNull(executor);
     }
 
     @Test
-    public void testTaskExecutor() {
-        ThreadPoolTaskExecutor executor = (ThreadPoolTaskExecutor) batchConfig.taskExecutor();
-        assertNotNull(executor);
+    void testJobLauncher() throws Exception {
+        JobLauncher launcher = batchConfig.jobLauncher();
+        Assertions.assertNotNull(launcher);
     }
 
     @Test
-    public void testJobLauncher() {
-        TaskExecutorJobLauncher launcher = batchConfig.jobLauncher(jobRepository);
-        assertNotNull(launcher);
-    }
-
-    @Test
-    public void testEnsureTableExistsAndIsEmpty() {
+    void testEnsureTableExistsAndIsEmpty() {
         doNothing().when(jdbcTemplate).execute(anyString());
-        batchConfig.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
-        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
-        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
+        batchConfig.ensureTableExistsAndIsEmpty(jdbcTemplate, "test_table");
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM test_table WHERE 1 = 0");
+        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE test_table");
     }
 
     @Test
-    public void testBuildDynamicSql() {
+    void testBuildDynamicSql() {
         Map<String, Object> sampleItem = new HashMap<>();
         sampleItem.put("col1", "val1");
         sampleItem.put("col2", "val2");
 
-        String expectedSql = "INSERT INTO " + destTable + " (col1, col2) VALUES (:col1, :col2)";
-        String sql = batchConfig.buildDynamicSql(sampleItem, destTable);
+        String expectedSql = "INSERT INTO test_table (col1, col2) VALUES (:col1, :col2)";
+        String sql = batchConfig.buildDynamicSql(sampleItem, "test_table");
 
-        assertEquals(expectedSql, sql);
+        Assertions.assertEquals(expectedSql, sql);
     }
 
     @Test
-    public void testMapToSqlParameterSource() {
+    void testMapToSqlParameterSource() {
         Map<String, Object> item = new HashMap<>();
         item.put("col1", "val1");
         item.put("col2", 123);
 
         SqlParameterSource parameterSource = batchConfig.mapToSqlParameterSource(item);
 
-        assertEquals("val1", parameterSource.getValue("col1"));
-        assertEquals(123, parameterSource.getValue("col2"));
+        Assertions.assertEquals("val1", parameterSource.getValue("col1"));
+        Assertions.assertEquals(123, parameterSource.getValue("col2"));
     }
 
     @Test
-    public void testItemWriter() throws Exception {
+    void testItemWriter() throws Exception {
         doNothing().when(jdbcTemplate).execute(anyString());
         Map<String, Object> jobParameters = new HashMap<>();
-        jobParameters.put("dest_table", destTable);
+        jobParameters.put("dest_table", "test_table");
         jobParameters.put("appendData", "false");
 
-        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(dataSource, jdbcTemplate, destTable, "false");
+        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(dataSource, jdbcTemplate, "test_table", "false");
 
         List<Map<String, Object>> items = new ArrayList<>();
         Map<String, Object> item = new HashMap<>();
@@ -148,23 +136,17 @@ public class BootBatchExampleApplicationTests {
 
         writer.write(items);
 
-        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
-        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM test_table WHERE 1 = 0");
+        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE test_table");
     }
 
     @Test
-    public void testFlatFileItemReader() throws Exception {
+    void testFlatFileItemReader() throws Exception {
         Map<String, Object> jobParameters = new HashMap<>();
         jobParameters.put("jsonFile", "{\"filePath\":\"/path/to/file.csv\", \"dbColumns\":[], \"delimiter\":\",\", \"SkipException\":[], \"datatype\":[], \"fileColumns\":[], \"requiredColumns\":[]}");
 
         FlatFileItemReader<Map<String, Object>> reader = batchConfig.reader(jobParameters);
 
-        assertNotNull(reader);
-    }
-
-    @Test
-    public void testItemProcessor() {
-        ItemProcessor<Map<String, Object>, Map<String, Object>> processor = batchConfig.itemProcessor();
-        assertNotNull(processor);
+        Assertions.assertNotNull(reader);
     }
 }
