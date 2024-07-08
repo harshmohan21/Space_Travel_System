@@ -54,12 +54,6 @@ public class BootBatchExampleApplicationTests {
     private DataSource dataSource;
 
     @Mock
-    private JobBuilderFactory jobBuilderFactory;
-
-    @Mock
-    private StepBuilderFactory stepBuilderFactory;
-
-    @Mock
     private JobCompletionNotificationImpl listener;
 
     @Mock
@@ -78,8 +72,7 @@ public class BootBatchExampleApplicationTests {
 
     @BeforeEach
     public void setUp() {
-        when(jobBuilderFactory.get("job")).thenReturn(new JobBuilder("job", jobRepository));
-        when(stepBuilderFactory.get("jobStep")).thenReturn(new StepBuilder("jobStep", jobRepository));
+        // No setup needed as StepBuilderFactory and JobBuilderFactory are deprecated.
     }
 
     @Test
