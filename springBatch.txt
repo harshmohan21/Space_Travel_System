@@ -1,197 +1,110 @@
-Certainly! Here's how you can modify the `CustomItemProcessor` to use the `List<String>` columns and the provided processor method:
-
-1. **Implement the CustomItemProcessor:**
-
-```java
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.jdbc.core.JdbcTemplate;
-
-import java.util.List;
-import java.util.Map;
-
-public class CustomItemProcessor implements ItemProcessor<Map<String, Object>, Map<String, Object>> {
-
-    private final JdbcTemplate jdbcTemplate;
-    private final String destTable;
-    private final List<String> columns;
-
-    public CustomItemProcessor(JdbcTemplate jdbcTemplate, String destTable, List<String> columns) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.destTable = destTable;
-        this.columns = columns;
-    }
-
-    @Override
-    public Map<String, Object> process(Map<String, Object> item) throws Exception {
-        StringBuilder queryBuilder = new StringBuilder("SELECT COUNT(*) FROM " + destTable + " WHERE ");
-        Object[] params = new Object[columns.size()];
-
-        for (int i = 0; i < columns.size(); i++) {
-            queryBuilder.append(columns.get(i)).append(" = ? ");
-            if (i < columns.size() - 1) {
-                queryBuilder.append("AND ");
-            }
-            params[i] = item.get(columns.get(i));
-        }
-
-        int count = jdbcTemplate.queryForObject(queryBuilder.toString(), params, Integer.class);
-
-        if (count > 0) {
-            // Skip the record if it already exists
-            return null;
-        }
-
-        // Process the record if it does not exist
-        return item;
-    }
-}
-```
-
-2. **Modify the Processor Method to Use the CustomItemProcessor:**
-
-```java
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Component;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-
-@Component
-public class BatchProcessorConfig {
-
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
-
-    public BatchProcessorConfig(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-    }
-
-    @Bean
-    public ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor(@Value("#{jobParameters}") Map<String, Object> jobParameters) throws Exception {
-        System.out.println("inside itemProcessor");
-
-        String input = (String) jobParameters.get("jsonFile");
-        ObjectNode obj = (ObjectNode) objectMapper.readTree(input);
-        JsonNode dbColumns = obj.get("dbColumns");
-
-        List<String> columnNames = ListGen(dbColumns);
-        String destTable = obj.get("destTable").asText();
-
-        return new CustomItemProcessor(jdbcTemplate, destTable, columnNames);
-    }
-
-    private List<String> ListGen(JsonNode dbColumns) {
-        List<String> columns = new ArrayList<>();
-        dbColumns.forEach(column -> columns.add(column.asText()));
-        return columns;
-    }
-}
-```
-
-3. **Update Your Step Configuration to Use the Custom Item Processor:**
-
-```java
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.JobScope;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemReader;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.PlatformTransactionManager;
-
-@Bean
-@JobScope
-public Step step(JobRepository jobRepository,
-                 PlatformTransactionManager transactionManager,
-                 ItemReader<Map<String, Object>> reader,
-                 ItemProcessor<Map<String, Object>, Map<String, Object>> processor,
-                 ItemWriter<Map<String, Object>> writer,
-                 JdbcTemplate jdbcTemplate,
-                 @Value("#{jobParameters['SkipException']}") String skipException,
-                 @Value("#{jobParameters['lineCount']}") long lineCount,
-                 @Value("#{jobParameters['destTable']}") String destTable) {
-
-    System.out.println("Skip data " + skipException);
-    int chunkSize = (int) (lineCount / 100);
-    boolean skip = Boolean.parseBoolean(skipException);
-    double skipLim = lineCount * 0.05;
-    int skipLimit = Math.min((int) skipLim, Integer.MAX_VALUE);
-
-    StepBuilder stepBuilder = new StepBuilder("jobStep", jobRepository);
-    return stepBuilder.<Map<String, Object>, Map<String, Object>>chunk(chunkSize, transactionManager)
-            .reader(reader)
-            .processor(processor) // Use the custom processor
-            .writer(writer)
-            .faultTolerant()
-            .skip(FlatFileParseException.class)
-            .skip(BadSqlGrammarException.class)
-            .retry(FlatFileParseException.class)
-            .skipLimit(skip ? skipLimit : 0)
-            .listener(new CustomStepExecutionListener(destTable))
-            .listener(new CustomChunkListener(destTable))
-            .build();
-}
-```
-
-With these changes, your `CustomItemProcessor` will check for duplicate records based on all specified columns and skip any duplicates. The `itemProcessor` method in `BatchProcessorConfig` sets up the processor with the necessary parameters extracted from the job parameters.
-
-
-
-
-
-
-
-
-
-
-
-import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
+import java.io.File;
 import java.util.*;
 
 import javax.sql.DataSource;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.core.*;
+import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.job.builder.StepBuilder;
+import org.springframework.batch.core.listener.JobExecutionListenerSupport;
+import org.springframework.batch.core.step.builder.SimpleStepBuilder;
+import org.springframework.batch.core.step.builder.StepBuilderHelper;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemReader;
+import org.springframework.batch.item.ItemWriter;
 import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
-import org.springframework.batch.item.database.JdbcBatchItemWriter;
-import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.batch.item.file.FlatFileItemReader;
+import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
+import org.springframework.batch.item.file.mapping.DefaultLineMapper;
+import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
+import org.springframework.batch.support.transaction.ResourcelessTransactionManager;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 @ExtendWith(MockitoExtension.class)
-public class BatchConfigTest {
+public class BootBatchExampleApplicationTests {
+
+    @Mock
+    private JobRepository jobRepository;
+
+    @Mock
+    private DataSourceTransactionManager transactionManager;
+
+    @Mock
+    private JdbcTemplate jdbcTemplate;
 
     @Mock
     private DataSource dataSource;
 
     @Mock
-    private JdbcTemplate jdbcTemplate;
+    private JobBuilderFactory jobBuilderFactory;
+
+    @Mock
+    private StepBuilderFactory stepBuilderFactory;
+
+    @Mock
+    private JobCompletionNotificationImpl listener;
+
+    @Mock
+    private ItemReader<Map<String, Object>> reader;
+
+    @Mock
+    private ItemProcessor<Map<String, Object>, Map<String, Object>> processor;
+
+    @Mock
+    private ItemWriter<Map<String, Object>> writer;
 
     @InjectMocks
     private BatchConfig batchConfig;
 
     private String destTable = "test_table";
+
+    @BeforeEach
+    public void setUp() {
+        when(jobBuilderFactory.get("job")).thenReturn(new JobBuilder("job", jobRepository));
+        when(stepBuilderFactory.get("jobStep")).thenReturn(new StepBuilder("jobStep", jobRepository));
+    }
+
+    @Test
+    public void testJobBean() {
+        Job job = batchConfig.jobBean(jobRepository, listener, null);
+        assertNotNull(job);
+    }
+
+    @Test
+    public void testSteps() throws Exception {
+        Step step = batchConfig.steps(jobRepository, transactionManager, reader, processor, writer, jdbcTemplate, "true", 1000, destTable);
+        assertNotNull(step);
+    }
+
+    @Test
+    public void testTaskExecutor() {
+        ThreadPoolTaskExecutor executor = (ThreadPoolTaskExecutor) batchConfig.taskExecutor();
+        assertNotNull(executor);
+    }
+
+    @Test
+    public void testJobLauncher() {
+        TaskExecutorJobLauncher launcher = batchConfig.jobLauncher(jobRepository);
+        assertNotNull(launcher);
+    }
 
     @Test
     public void testEnsureTableExistsAndIsEmpty() {
@@ -230,8 +143,9 @@ public class BatchConfigTest {
         doNothing().when(jdbcTemplate).execute(anyString());
         Map<String, Object> jobParameters = new HashMap<>();
         jobParameters.put("dest_table", destTable);
+        jobParameters.put("appendData", "false");
 
-        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(dataSource, jdbcTemplate, destTable);
+        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(dataSource, jdbcTemplate, destTable, "false");
 
         List<Map<String, Object>> items = new ArrayList<>();
         Map<String, Object> item = new HashMap<>();
@@ -243,5 +157,21 @@ public class BatchConfigTest {
 
         verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
         verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
+    }
+
+    @Test
+    public void testFlatFileItemReader() throws Exception {
+        Map<String, Object> jobParameters = new HashMap<>();
+        jobParameters.put("jsonFile", "{\"filePath\":\"/path/to/file.csv\", \"dbColumns\":[], \"delimiter\":\",\", \"SkipException\":[], \"datatype\":[], \"fileColumns\":[], \"requiredColumns\":[]}");
+
+        FlatFileItemReader<Map<String, Object>> reader = batchConfig.reader(jobParameters);
+
+        assertNotNull(reader);
+    }
+
+    @Test
+    public void testItemProcessor() {
+        ItemProcessor<Map<String, Object>, Map<String, Object>> processor = batchConfig.itemProcessor();
+        assertNotNull(processor);
     }
 }
