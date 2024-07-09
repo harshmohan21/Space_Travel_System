@@ -1,85 +1,119 @@
-The issue you're facing with columns containing `oracle.sql.ARRAY` types not printing data is due to the way JDBC handles complex types like arrays when fetching data from the database. JDBC itself doesn't directly handle these types in a way that you can simply print their contents like primitive types or strings. To properly handle `oracle.sql.ARRAY` types and retrieve their data, you typically need to extract the array elements and process them accordingly. Here’s how you can approach this:
+If you want to generate `JobParameters` from the result of a SQL query instead of a `MultipartFile`, you can modify your code to directly use the query result. Here’s an example of how you can achieve this by first fetching the result from the database and then creating `JobParameters` based on the fetched data.
 
-### Handling `oracle.sql.ARRAY` Types in JDBC
+### Step-by-Step Implementation
 
-1. **Retrieve and Process Arrays**: Use JDBC methods to retrieve the `oracle.sql.ARRAY` data and convert it into a usable Java object or format.
+1. **Fetch Data from Database**: Use `JdbcTemplate` to fetch data from the database.
+2. **Create JobParameters**: Use the fetched data to create `JobParameters`.
 
-2. **Convert Arrays to Java Types**: Depending on what the arrays represent (e.g., list of columns, data types, etc.), you might need to manually convert them into Java types that you can print or use further.
+Here’s an example implementation based on your requirements:
 
-### Example Approach
-
-Let’s assume you have a method to print out each column and its corresponding value from the database result. You can extend this to handle `oracle.sql.ARRAY` types by extracting and processing them appropriately. Here’s a modified example:
+### Step 1: Fetch Data from Database
 
 ```java
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Service;
 
-import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 
-@RestController
-@RequestMapping("/api")
-public class DataController {
+@Service
+public class JobConfigService {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    @PostMapping("/printData")
-    public void printData() {
-        String configId = "1"; // Hardcoded for demonstration
-        String tableName = "JOB_CONFIGURATIONS"; // Ensure this matches your table name
-
-        String sql = "SELECT * FROM " + tableName + " WHERE CONFIG_ID = ?";
-        List<Map<String, Object>> result = jdbcTemplate.queryForList(sql, configId);
-
-        for (Map<String, Object> row : result) {
-            for (Map.Entry<String, Object> entry : row.entrySet()) {
-                String columnName = entry.getKey();
-                Object columnValue = entry.getValue();
-
-                // Handle oracle.sql.ARRAY types
-                if (columnValue instanceof Array) {
-                    try {
-                        Array array = (Array) columnValue;
-                        Object[] arrayData = (Object[]) array.getArray();
-
-                        // Print array elements
-                        System.out.print(columnName + ": ");
-                        for (Object element : arrayData) {
-                            System.out.print(element + " ");
-                        }
-                        System.out.println(); // Move to next line
-                    } catch (SQLException e) {
-                        e.printStackTrace(); // Handle exception appropriately
-                    }
-                } else {
-                    // Print other types as usual
-                    System.out.println(columnName + ": " + columnValue);
-                }
+    public Map<String, Object> fetchJobConfig(String configId) {
+        String sql = "SELECT * FROM JOB_CONFIGURATIONS WHERE CONFIG_ID = ?";
+        return jdbcTemplate.queryForObject(sql, new Object[]{configId}, new RowMapper<Map<String, Object>>() {
+            @Override
+            public Map<String, Object> mapRow(ResultSet rs, int rowNum) throws SQLException {
+                Map<String, Object> result = new HashMap<>();
+                result.put("configId", rs.getString("CONFIG_ID"));
+                result.put("filePath", rs.getString("FILEPATH"));
+                result.put("delimiter", rs.getString("DELIMITER"));
+                result.put("fileColumns", rs.getArray("FILE_COLUMNS").getArray());
+                result.put("requiredColumns", rs.getArray("REQUIRED_COLUMNS").getArray());
+                result.put("dbColumns", rs.getArray("DB_COLUMNS").getArray());
+                result.put("dataTypes", rs.getArray("DATATYPES").getArray());
+                result.put("destTable", rs.getString("DEST_TABLE"));
+                result.put("skipException", rs.getString("SKIP_EXCEPTION"));
+                result.put("appendData", rs.getString("APPEND_DATA"));
+                return result;
             }
-            System.out.println(); // Separate rows with an empty line
-        }
+        });
     }
 }
 ```
 
-### Explanation:
+### Step 2: Create JobParameters from Fetched Data
 
-- **Array Handling**: Check if the `columnValue` is an instance of `Array`. If true, cast it to `Array` and retrieve the array data using `array.getArray()`.
-- **Printing Array Elements**: Iterate through the array elements (`arrayData`) and print them out.
-- **Other Types**: Print other types (`String`, `Integer`, etc.) as usual.
-- **Exception Handling**: Properly handle `SQLException` that may occur during array retrieval.
+```java
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
-### Notes:
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Map;
 
-- Ensure your JDBC driver supports `oracle.sql.ARRAY` types and that your application has appropriate permissions and access to retrieve and process these types.
-- Customize the handling based on the actual structure and content of your `JOB_CONFIGURATIONS` table.
-- Consider encapsulating the array handling logic into a separate method or utility class for better code organization and reusability.
+@Component
+public class JobParametersGenerator {
 
-By following this approach, you should be able to properly handle and print data from columns containing `oracle.sql.ARRAY` types in your Spring JDBC application. Adjust the code as per your specific array contents and application requirements.
+    @Autowired
+    private JobConfigService jobConfigService;
+
+    public JobParameters createJobParam(String configId) throws Exception {
+        Map<String, Object> config = jobConfigService.fetchJobConfig(configId);
+
+        String filePath = (String) config.get("filePath");
+        Path path = Paths.get(filePath);
+        long lineCount = Files.lines(path).count();
+
+        return new JobParametersBuilder()
+                .addString("configId", (String) config.get("configId"))
+                .addString("filePath", filePath)
+                .addString("delimiter", (String) config.get("delimiter"))
+                .addString("fileColumns", arrayToString((Object[]) config.get("fileColumns")))
+                .addString("requiredColumns", arrayToString((Object[]) config.get("requiredColumns")))
+                .addString("dbColumns", arrayToString((Object[]) config.get("dbColumns")))
+                .addString("dataTypes", arrayToString((Object[]) config.get("dataTypes")))
+                .addString("destTable", (String) config.get("destTable"))
+                .addString("skipException", (String) config.get("skipException"))
+                .addString("appendData", (String) config.get("appendData"))
+                .addLong("lineCount", lineCount)
+                .addLong("startAt", System.currentTimeMillis())
+                .toJobParameters();
+    }
+
+    private String arrayToString(Object[] array) {
+        StringBuilder sb = new StringBuilder();
+        for (Object obj : array) {
+            sb.append(obj.toString()).append(",");
+        }
+        return sb.length() > 0 ? sb.substring(0, sb.length() - 1) : "";
+    }
+}
+```
+
+### Explanation
+
+1. **JobConfigService**: Fetches data from the `JOB_CONFIGURATIONS` table based on `configId`. The `mapRow` method maps the SQL result to a `Map<String, Object>`.
+
+2. **JobParametersGenerator**: Uses the fetched data to generate `JobParameters`.
+
+    - **File Path**: Reads the file path from the fetched data and counts the lines in the file.
+    - **Convert Array to String**: Converts `oracle.sql.ARRAY` to a comma-separated string using the `arrayToString` method.
+
+### Notes
+
+- **Ensure the Database Connection**: Verify that your database connection details are correctly configured in your `application.properties` or `application.yml`.
+- **Error Handling**: Add appropriate error handling to manage exceptions, such as `SQLException` or `IOException`.
+- **Refactor if Needed**: Customize the `mapRow` method and `JobParametersGenerator` class as needed to fit your specific requirements.
+
+This approach allows you to dynamically fetch configuration data from the database and create `JobParameters` for your job based on that data.
