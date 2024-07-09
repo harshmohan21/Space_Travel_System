@@ -1,281 +1,85 @@
-If you want to achieve the functionality without using Spring Data JPA and relying on plain JDBC, you need to manually implement the repository methods using `JdbcTemplate`. Below are the steps to implement the required functionality without Spring Data JPA:
+The issue you're facing with columns containing `oracle.sql.ARRAY` types not printing data is due to the way JDBC handles complex types like arrays when fetching data from the database. JDBC itself doesn't directly handle these types in a way that you can simply print their contents like primitive types or strings. To properly handle `oracle.sql.ARRAY` types and retrieve their data, you typically need to extract the array elements and process them accordingly. Here’s how you can approach this:
 
-### Step 1: Create the Entity Class
+### Handling `oracle.sql.ARRAY` Types in JDBC
 
-Define the `JobConfig` entity class.
+1. **Retrieve and Process Arrays**: Use JDBC methods to retrieve the `oracle.sql.ARRAY` data and convert it into a usable Java object or format.
 
-```java
-import java.util.List;
+2. **Convert Arrays to Java Types**: Depending on what the arrays represent (e.g., list of columns, data types, etc.), you might need to manually convert them into Java types that you can print or use further.
 
-public class JobConfig {
-    private String configId;
-    private String filepath;
-    private String delimiter;
-    private List<String> fileColumns;
-    private List<String> requiredColumns;
-    private List<String> dbColumns;
-    private List<String> datatypes;
-    private String destTable;
-    private Boolean skipException;
+### Example Approach
 
-    // Getters and setters
-    public String getConfigId() {
-        return configId;
-    }
-
-    public void setConfigId(String configId) {
-        this.configId = configId;
-    }
-
-    public String getFilepath() {
-        return filepath;
-    }
-
-    public void setFilepath(String filepath) {
-        this.filepath = filepath;
-    }
-
-    public String getDelimiter() {
-        return delimiter;
-    }
-
-    public void setDelimiter(String delimiter) {
-        this.delimiter = delimiter;
-    }
-
-    public List<String> getFileColumns() {
-        return fileColumns;
-    }
-
-    public void setFileColumns(List<String> fileColumns) {
-        this.fileColumns = fileColumns;
-    }
-
-    public List<String> getRequiredColumns() {
-        return requiredColumns;
-    }
-
-    public void setRequiredColumns(List<String> requiredColumns) {
-        this.requiredColumns = requiredColumns;
-    }
-
-    public List<String> getDbColumns() {
-        return dbColumns;
-    }
-
-    public void setDbColumns(List<String> dbColumns) {
-        this.dbColumns = dbColumns;
-    }
-
-    public List<String> getDatatypes() {
-        return datatypes;
-    }
-
-    public void setDatatypes(List<String> datatypes) {
-        this.datatypes = datatypes;
-    }
-
-    public String getDestTable() {
-        return destTable;
-    }
-
-    public void setDestTable(String destTable) {
-        this.destTable = destTable;
-    }
-
-    public Boolean getSkipException() {
-        return skipException;
-    }
-
-    public void setSkipException(Boolean skipException) {
-        this.skipException = skipException;
-    }
-}
-```
-
-### Step 2: Create the Repository Class
-
-Implement the repository methods using `JdbcTemplate`.
+Let’s assume you have a method to print out each column and its corresponding value from the database result. You can extend this to handle `oracle.sql.ARRAY` types by extracting and processing them appropriately. Here’s a modified example:
 
 ```java
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.stereotype.Repository;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
+import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
-@Repository
-public class JobConfigRepository {
+@RestController
+@RequestMapping("/api")
+public class DataController {
+
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    private static final String FIND_BY_ID_SQL = "SELECT * FROM job_configurations WHERE config_id = ?";
+    @PostMapping("/printData")
+    public void printData() {
+        String configId = "1"; // Hardcoded for demonstration
+        String tableName = "JOB_CONFIGURATIONS"; // Ensure this matches your table name
 
-    public JobConfig findById(String configId) {
-        return jdbcTemplate.queryForObject(FIND_BY_ID_SQL, new Object[]{configId}, new JobConfigRowMapper());
-    }
+        String sql = "SELECT * FROM " + tableName + " WHERE CONFIG_ID = ?";
+        List<Map<String, Object>> result = jdbcTemplate.queryForList(sql, configId);
 
-    private static class JobConfigRowMapper implements RowMapper<JobConfig> {
-        @Override
-        public JobConfig mapRow(ResultSet rs, int rowNum) throws SQLException {
-            JobConfig jobConfig = new JobConfig();
-            jobConfig.setConfigId(rs.getString("config_id"));
-            jobConfig.setFilepath(rs.getString("filepath"));
-            jobConfig.setDelimiter(rs.getString("delimiter"));
-            jobConfig.setFileColumns(Arrays.asList((String[]) rs.getArray("file_columns").getArray()));
-            jobConfig.setRequiredColumns(Arrays.asList((String[]) rs.getArray("required_columns").getArray()));
-            jobConfig.setDbColumns(Arrays.asList((String[]) rs.getArray("db_columns").getArray()));
-            jobConfig.setDatatypes(Arrays.asList((String[]) rs.getArray("datatypes").getArray()));
-            jobConfig.setDestTable(rs.getString("dest_table"));
-            jobConfig.setSkipException(rs.getBoolean("skip_exception"));
-            return jobConfig;
-        }
-    }
-}
-```
+        for (Map<String, Object> row : result) {
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                String columnName = entry.getKey();
+                Object columnValue = entry.getValue();
 
-### Step 3: Create the Service Class
+                // Handle oracle.sql.ARRAY types
+                if (columnValue instanceof Array) {
+                    try {
+                        Array array = (Array) columnValue;
+                        Object[] arrayData = (Object[]) array.getArray();
 
-Implement the service class to fetch job configuration from the database.
-
-```java
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-
-import java.util.HashMap;
-import java.util.Map;
-
-@Service
-public class JobConfigService {
-    @Autowired
-    private JobConfigRepository jobConfigRepository;
-
-    public Map<String, Object> getJobConfig(String configId) {
-        JobConfig jobConfig = jobConfigRepository.findById(configId);
-        if (jobConfig == null) {
-            throw new RuntimeException("Configuration not found");
-        }
-
-        Map<String, Object> jobParameters = new HashMap<>();
-        jobParameters.put("dest_table", jobConfig.getDestTable());
-        jobParameters.put("appendData", jobConfig.getAppendData().toString());
-        // Add other parameters as needed
-
-        return jobParameters;
-    }
-}
-```
-
-### Step 4: Update the Controller Class
-
-Modify the `JobLauncherController` to use this service.
-
-```java
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobLauncher;
-import org.springframework.batch.core.JobParameter;
-import org.springframework.batch.core.JobParameters;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
-import java.util.HashMap;
-import java.util.Map;
-
-@RestController
-public class JobLauncherController {
-    @Autowired
-    private JobLauncher jobLauncher;
-
-    @Autowired
-    private Job job;
-
-    @Autowired
-    private JobConfigService jobConfigService;
-
-    @PostMapping("/jobLauncher")
-    public void handle(@RequestParam("configId") String configId) throws Exception {
-        Map<String, JobParameter> jobParameters = createJobParam(configId);
-        JobExecution jobExecution = jobLauncher.run(job, new JobParameters(jobParameters));
-        // Handle the job execution result as needed
-    }
-
-    private Map<String, JobParameter> createJobParam(String configId) {
-        Map<String, Object> jobConfig = jobConfigService.getJobConfig(configId);
-        Map<String, JobParameter> jobParameters = new HashMap<>();
-        jobConfig.forEach((key, value) -> jobParameters.put(key, new JobParameter(value.toString())));
-        return jobParameters;
-    }
-}
-```
-
-### Summary
-
-1. **Entity Class**: Define the `JobConfig` class to match the database table structure.
-2. **Repository Class**: Implement the `JobConfigRepository` using `JdbcTemplate` for database operations.
-3. **Service Class**: Use the repository to fetch job configuration and convert it to a map of job parameters.
-4. **Controller Class**: Modify the controller to fetch job configuration and use it to create job parameters and run the job.
-
-This setup should work without using Spring Data JPA and instead relies on plain JDBC for database operations. Make sure your table and column names match those used in the entity class and repository methods.
-
-
-
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobLauncher;
-import org.springframework.batch.core.JobParameter;
-import org.springframework.batch.core.JobParameters;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
-import java.util.HashMap;
-import java.util.Map;
-
-@RestController
-public class JobLauncherController {
-    @Autowired
-    private JobLauncher jobLauncher;
-
-    @Autowired
-    private Job job;
-
-    @Autowired
-    private JobConfigService jobConfigService;
-
-    @PostMapping("/jobLauncher")
-    public void handle(@RequestParam("configId") String configId) throws Exception {
-        Map<String, JobParameter> jobParameters = createJobParam(configId);
-        JobExecution jobExecution = jobLauncher.run(job, new JobParameters(jobParameters));
-        // Handle the job execution result as needed
-    }
-
-    private Map<String, JobParameter> createJobParam(String configId) {
-        Map<String, Object> jobConfig = jobConfigService.getJobConfig(configId);
-        Map<String, JobParameter> jobParameters = new HashMap<>();
-        jobConfig.forEach((key, value) -> {
-            if (value instanceof String) {
-                jobParameters.put(key, new JobParameter((String) value));
-            } else if (value instanceof Long) {
-                jobParameters.put(key, new JobParameter((Long) value));
-            } else if (value instanceof Double) {
-                jobParameters.put(key, new JobParameter((Double) value));
-            } else if (value instanceof Integer) {
-                jobParameters.put(key, new JobParameter(((Integer) value).longValue()));
-            } else {
-                throw new IllegalArgumentException("Unsupported job parameter type: " + value.getClass());
+                        // Print array elements
+                        System.out.print(columnName + ": ");
+                        for (Object element : arrayData) {
+                            System.out.print(element + " ");
+                        }
+                        System.out.println(); // Move to next line
+                    } catch (SQLException e) {
+                        e.printStackTrace(); // Handle exception appropriately
+                    }
+                } else {
+                    // Print other types as usual
+                    System.out.println(columnName + ": " + columnValue);
+                }
             }
-        });
-        return jobParameters;
+            System.out.println(); // Separate rows with an empty line
+        }
     }
 }
+```
 
+### Explanation:
 
+- **Array Handling**: Check if the `columnValue` is an instance of `Array`. If true, cast it to `Array` and retrieve the array data using `array.getArray()`.
+- **Printing Array Elements**: Iterate through the array elements (`arrayData`) and print them out.
+- **Other Types**: Print other types (`String`, `Integer`, etc.) as usual.
+- **Exception Handling**: Properly handle `SQLException` that may occur during array retrieval.
 
+### Notes:
+
+- Ensure your JDBC driver supports `oracle.sql.ARRAY` types and that your application has appropriate permissions and access to retrieve and process these types.
+- Customize the handling based on the actual structure and content of your `JOB_CONFIGURATIONS` table.
+- Consider encapsulating the array handling logic into a separate method or utility class for better code organization and reusability.
+
+By following this approach, you should be able to properly handle and print data from columns containing `oracle.sql.ARRAY` types in your Spring JDBC application. Adjust the code as per your specific array contents and application requirements.
