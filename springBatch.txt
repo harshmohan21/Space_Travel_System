@@ -1,152 +1,227 @@
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+The `configId` in the `@RequestParam("configId")` annotation is used to identify which job configuration to fetch from the database. It acts as a key or identifier to retrieve the specific job configuration stored in your database.
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.DefaultBatchConfigurer;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.core.step.builder.SimpleStepBuilder;
-import org.springframework.batch.core.step.tasklet.TaskletStep;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemReader;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.test.context.SpringBatchTest;
+Here's how it fits into the overall process:
+
+1. **Client Request**: When a client sends a request to the `/jobLauncher` endpoint, they provide a `configId` as a query parameter. This `configId` corresponds to a record in the `job_configurations` table in the database.
+
+2. **Fetching Configuration**: The `JobConfigService` uses the `configId` to fetch the appropriate job configuration from the `JobConfigRepository`.
+
+3. **Job Parameters**: The fetched job configuration is then converted into job parameters that are used to run the batch job.
+
+### Example Request
+
+A client might send a request like this:
+```
+POST /jobLauncher?configId=123
+```
+
+In this example, `123` is the `configId`. The controller will use this `configId` to fetch the job configuration with the ID `123` from the database.
+
+### Code Breakdown
+
+Here's a detailed look at how the `configId` is used:
+
+1. **Controller Method**:
+   ```java
+   @PostMapping("/jobLauncher")
+   public void handle(@RequestParam("configId") String configId) throws Exception {
+       Map<String, JobParameter> jobParameters = createJobParam(configId);
+       JobExecution jobExecution = jobLauncher.run(job, new JobParameters(jobParameters));
+       // Handle the job execution result as needed
+   }
+   ```
+
+2. **Creating Job Parameters**:
+   ```java
+   private Map<String, JobParameter> createJobParam(String configId) {
+       Map<String, Object> jobConfig = jobConfigService.getJobConfig(configId);
+       Map<String, JobParameter> jobParameters = new HashMap<>();
+       jobConfig.forEach((key, value) -> jobParameters.put(key, new JobParameter(value.toString())));
+       return jobParameters;
+   }
+   ```
+
+3. **Service Method**:
+   ```java
+   @Service
+   public class JobConfigService {
+       @Autowired
+       private JobConfigRepository jobConfigRepository;
+
+       public Map<String, Object> getJobConfig(String configId) {
+           JobConfig jobConfig = jobConfigRepository.findById(configId)
+                   .orElseThrow(() -> new RuntimeException("Configuration not found"));
+
+           // Convert jobConfig to Map<String, Object> if needed
+           Map<String, Object> jobParameters = new HashMap<>();
+           jobParameters.put("dest_table", jobConfig.getDestTable());
+           jobParameters.put("appendData", jobConfig.getAppendData());
+           // Add other parameters as needed
+
+           return jobParameters;
+       }
+   }
+   ```
+
+### Explanation:
+
+- **Controller**: The `@RequestParam("configId")` annotation extracts the `configId` from the client request and passes it to the `handle` method.
+- **Service**: The `getJobConfig` method in `JobConfigService` fetches the job configuration from the database using the provided `configId`.
+- **Job Parameters**: The configuration data is then converted into a format suitable for job parameters and used to run the job.
+
+This approach ensures that the job configuration is dynamically fetched based on the provided `configId`, allowing for flexible and configurable batch job executions.
+
+
+
+
+
+
+
+
+The table from which you are extracting the job configuration data is specified in the `JobConfig` entity class. The entity class is mapped to the database table, and the repository handles the database operations for this table.
+
+Let's add more detail to the entity and repository configuration.
+
+### Step 1: Entity Class
+
+Define the `JobConfig` entity class to map to your database table. The table name and columns should match those in your database.
+
+```java
+import javax.persistence.Entity;
+import javax.persistence.Id;
+import javax.persistence.Table;
+
+@Entity
+@Table(name = "job_configurations") // Specify the name of your table here
+public class JobConfig {
+    @Id
+    private String configId;
+
+    private String destTable;
+    private String appendData;
+    // Add other configuration fields as necessary
+
+    // Getters and setters
+    public String getConfigId() {
+        return configId;
+    }
+
+    public void setConfigId(String configId) {
+        this.configId = configId;
+    }
+
+    public String getDestTable() {
+        return destTable;
+    }
+
+    public void setDestTable(String destTable) {
+        this.destTable = destTable;
+    }
+
+    public String getAppendData() {
+        return appendData;
+    }
+
+    public void setAppendData(String appendData) {
+        this.appendData = appendData;
+    }
+
+    // Add getters and setters for other fields
+}
+```
+
+### Step 2: Repository Interface
+
+Create a repository interface for the `JobConfig` entity.
+
+```java
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface JobConfigRepository extends JpaRepository<JobConfig, String> {
+}
+```
+
+### Step 3: Service Class
+
+Implement the service class to fetch job configuration from the database.
+
+```java
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.core.task.TaskExecutor;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
 import java.util.Map;
 
-@SpringBootTest
-@ExtendWith(MockitoExtension.class)
-@SpringBatchTest
-class BootBatchExampleApplicationTests {
-
-    @Mock
-    private JobRepository jobRepository;
-
-    @Mock
-    private PlatformTransactionManager transactionManager;
-
-    @Mock
-    private ItemReader<Map<String, Object>> itemReader;
-
-    @Mock
-    private ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor;
-
-    @Mock
-    private ItemWriter<Map<String, Object>> itemWriter;
-
+@Service
+public class JobConfigService {
     @Autowired
-    private BatchConfig batchConfig;
+    private JobConfigRepository jobConfigRepository;
 
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
+    public Map<String, Object> getJobConfig(String configId) {
+        JobConfig jobConfig = jobConfigRepository.findById(configId)
+                .orElseThrow(() -> new RuntimeException("Configuration not found"));
 
-    @Test
-    void testJobBean() throws Exception {
-        Step step = new StepBuilder("jobStep", jobRepository)
-                .<Map<String, Object>, Map<String, Object>>chunk(10, transactionManager)
-                .reader(itemReader)
-                .processor(itemProcessor)
-                .writer(itemWriter)
-                .build();
-        Job job = new JobBuilder("job", jobRepository)
-                .start(step)
-                .build();
-
-        Assertions.assertNotNull(job);
-    }
-
-    @Test
-    void testItemProcessor() throws JsonProcessingException {
-        ItemProcessor<Map<String, Object>, Map<String, Object>> processor = batchConfig.itemProcessor();
-        Assertions.assertNotNull(processor);
-    }
-
-    @Test
-    void testTaskExecutor() {
-        TaskExecutor executor = batchConfig.taskExecutor();
-        Assertions.assertNotNull(executor);
-    }
-
-    @Test
-    void testJobLauncher() throws Exception {
-        JobLauncher launcher = batchConfig.jobLauncher();
-        Assertions.assertNotNull(launcher);
-    }
-
-    @Test
-    void testEnsureTableExistsAndIsEmpty() {
-        doNothing().when(jdbcTemplate).execute(anyString());
-        batchConfig.ensureTableExistsAndIsEmpty(jdbcTemplate, "test_table");
-        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM test_table WHERE 1 = 0");
-        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE test_table");
-    }
-
-    @Test
-    void testBuildDynamicSql() {
-        Map<String, Object> sampleItem = new HashMap<>();
-        sampleItem.put("col1", "val1");
-        sampleItem.put("col2", "val2");
-
-        String expectedSql = "INSERT INTO test_table (col1, col2) VALUES (:col1, :col2)";
-        String sql = batchConfig.buildDynamicSql(sampleItem, "test_table");
-
-        Assertions.assertEquals(expectedSql, sql);
-    }
-
-    @Test
-    void testMapToSqlParameterSource() {
-        Map<String, Object> item = new HashMap<>();
-        item.put("col1", "val1");
-        item.put("col2", 123);
-
-        SqlParameterSource parameterSource = batchConfig.mapToSqlParameterSource(item);
-
-        Assertions.assertEquals("val1", parameterSource.getValue("col1"));
-        Assertions.assertEquals(123, parameterSource.getValue("col2"));
-    }
-
-    @Test
-    void testItemWriter() throws Exception {
-        doNothing().when(jdbcTemplate).execute(anyString());
+        // Convert jobConfig to Map<String, Object> if needed
         Map<String, Object> jobParameters = new HashMap<>();
-        jobParameters.put("dest_table", "test_table");
-        jobParameters.put("appendData", "false");
+        jobParameters.put("dest_table", jobConfig.getDestTable());
+        jobParameters.put("appendData", jobConfig.getAppendData());
+        // Add other parameters as needed
 
-        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(dataSource, jdbcTemplate, "test_table", "false");
-
-        List<Map<String, Object>> items = new ArrayList<>();
-        Map<String, Object> item = new HashMap<>();
-        item.put("col1", "val1");
-        item.put("col2", 123);
-        items.add(item);
-
-        writer.write(items);
-
-        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM test_table WHERE 1 = 0");
-        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE test_table");
-    }
-
-    @Test
-    void testFlatFileItemReader() throws Exception {
-        Map<String, Object> jobParameters = new HashMap<>();
-        jobParameters.put("jsonFile", "{\"filePath\":\"/path/to/file.csv\", \"dbColumns\":[], \"delimiter\":\",\", \"SkipException\":[], \"datatype\":[], \"fileColumns\":[], \"requiredColumns\":[]}");
-
-        FlatFileItemReader<Map<String, Object>> reader = batchConfig.reader(jobParameters);
-
-        Assertions.assertNotNull(reader);
+        return jobParameters;
     }
 }
+```
+
+### Step 4: Controller Class
+
+Modify the `JobLauncherController` to use this service.
+
+```java
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.JobLauncher;
+import org.springframework.batch.core.JobParameter;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@RestController
+public class JobLauncherController {
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Job job;
+
+    @Autowired
+    private JobConfigService jobConfigService;
+
+    @PostMapping("/jobLauncher")
+    public void handle(@RequestParam("configId") String configId) throws Exception {
+        Map<String, JobParameter> jobParameters = createJobParam(configId);
+        JobExecution jobExecution = jobLauncher.run(job, new JobParameters(jobParameters));
+        // Handle the job execution result as needed
+    }
+
+    private Map<String, JobParameter> createJobParam(String configId) {
+        Map<String, Object> jobConfig = jobConfigService.getJobConfig(configId);
+        Map<String, JobParameter> jobParameters = new HashMap<>();
+        jobConfig.forEach((key, value) -> jobParameters.put(key, new JobParameter(value.toString())));
+        return jobParameters;
+    }
+}
+```
+
+### Explanation:
+
+1. **Entity Class**: The `@Entity` and `@Table` annotations specify the table and columns in your database.
+2. **Repository Interface**: This provides CRUD operations for the `JobConfig` entity.
+3. **Service Class**: This fetches the configuration from the database using the repository.
+4. **Controller Class**: The controller fetches the configuration from the database and uses it to create job parameters and run the job.
+
+Make sure the table name (`job_configurations`) and column names in the `JobConfig` entity match those in your database. Adjust the fields and methods in the `JobConfig` class according to the actual columns in your configuration table.
