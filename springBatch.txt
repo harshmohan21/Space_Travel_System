@@ -223,3 +223,59 @@ public class JobLauncherController {
 4. **Controller Class**: Modify the controller to fetch job configuration and use it to create job parameters and run the job.
 
 This setup should work without using Spring Data JPA and instead relies on plain JDBC for database operations. Make sure your table and column names match those used in the entity class and repository methods.
+
+
+
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.JobLauncher;
+import org.springframework.batch.core.JobParameter;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@RestController
+public class JobLauncherController {
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Job job;
+
+    @Autowired
+    private JobConfigService jobConfigService;
+
+    @PostMapping("/jobLauncher")
+    public void handle(@RequestParam("configId") String configId) throws Exception {
+        Map<String, JobParameter> jobParameters = createJobParam(configId);
+        JobExecution jobExecution = jobLauncher.run(job, new JobParameters(jobParameters));
+        // Handle the job execution result as needed
+    }
+
+    private Map<String, JobParameter> createJobParam(String configId) {
+        Map<String, Object> jobConfig = jobConfigService.getJobConfig(configId);
+        Map<String, JobParameter> jobParameters = new HashMap<>();
+        jobConfig.forEach((key, value) -> {
+            if (value instanceof String) {
+                jobParameters.put(key, new JobParameter((String) value));
+            } else if (value instanceof Long) {
+                jobParameters.put(key, new JobParameter((Long) value));
+            } else if (value instanceof Double) {
+                jobParameters.put(key, new JobParameter((Double) value));
+            } else if (value instanceof Integer) {
+                jobParameters.put(key, new JobParameter(((Integer) value).longValue()));
+            } else {
+                throw new IllegalArgumentException("Unsupported job parameter type: " + value.getClass());
+            }
+        });
+        return jobParameters;
+    }
+}
+
+
+
