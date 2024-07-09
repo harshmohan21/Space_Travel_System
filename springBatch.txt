@@ -1,82 +1,39 @@
-If you want to generate `JobParameters` from the result of a SQL query instead of a `MultipartFile`, you can modify your code to directly use the query result. Here’s an example of how you can achieve this by first fetching the result from the database and then creating `JobParameters` based on the fetched data.
-
-### Step-by-Step Implementation
-
-1. **Fetch Data from Database**: Use `JdbcTemplate` to fetch data from the database.
-2. **Create JobParameters**: Use the fetched data to create `JobParameters`.
-
-Here’s an example implementation based on your requirements:
-
-### Step 1: Fetch Data from Database
-
-```java
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.stereotype.Service;
-
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.HashMap;
-import java.util.Map;
-
-@Service
-public class JobConfigService {
-
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
-
-    public Map<String, Object> fetchJobConfig(String configId) {
-        String sql = "SELECT * FROM JOB_CONFIGURATIONS WHERE CONFIG_ID = ?";
-        return jdbcTemplate.queryForObject(sql, new Object[]{configId}, new RowMapper<Map<String, Object>>() {
-            @Override
-            public Map<String, Object> mapRow(ResultSet rs, int rowNum) throws SQLException {
-                Map<String, Object> result = new HashMap<>();
-                result.put("configId", rs.getString("CONFIG_ID"));
-                result.put("filePath", rs.getString("FILEPATH"));
-                result.put("delimiter", rs.getString("DELIMITER"));
-                result.put("fileColumns", rs.getArray("FILE_COLUMNS").getArray());
-                result.put("requiredColumns", rs.getArray("REQUIRED_COLUMNS").getArray());
-                result.put("dbColumns", rs.getArray("DB_COLUMNS").getArray());
-                result.put("dataTypes", rs.getArray("DATATYPES").getArray());
-                result.put("destTable", rs.getString("DEST_TABLE"));
-                result.put("skipException", rs.getString("SKIP_EXCEPTION"));
-                result.put("appendData", rs.getString("APPEND_DATA"));
-                return result;
-            }
-        });
-    }
-}
-```
-
-### Step 2: Create JobParameters from Fetched Data
-
-```java
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.batch.core.JobParameters;
 import org.springframework.batch.core.JobParametersBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.sql.Array;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
-@Component
-public class JobParametersGenerator {
+@Service
+public class JobParameterService {
 
     @Autowired
-    private JobConfigService jobConfigService;
+    private JdbcTemplate jdbcTemplate;
 
     public JobParameters createJobParam(String configId) throws Exception {
-        Map<String, Object> config = jobConfigService.fetchJobConfig(configId);
+        // Fetch data from the database
+        Map<String, Object> config = fetchJobConfig(configId);
 
+        // Extract data from the result
         String filePath = (String) config.get("filePath");
         Path path = Paths.get(filePath);
         long lineCount = Files.lines(path).count();
 
+        // Create JobParameters
         return new JobParametersBuilder()
-                .addString("configId", (String) config.get("configId"))
                 .addString("filePath", filePath)
                 .addString("delimiter", (String) config.get("delimiter"))
                 .addString("fileColumns", arrayToString((Object[]) config.get("fileColumns")))
@@ -91,6 +48,24 @@ public class JobParametersGenerator {
                 .toJobParameters();
     }
 
+    private Map<String, Object> fetchJobConfig(String configId) {
+        String sql = "SELECT * FROM JOB_CONFIGURATIONS WHERE CONFIG_ID = ?";
+        return jdbcTemplate.queryForObject(sql, new Object[]{configId}, (ResultSet rs, int rowNum) -> {
+            Map<String, Object> result = new HashMap<>();
+            result.put("configId", rs.getString("CONFIG_ID"));
+            result.put("filePath", rs.getString("FILEPATH"));
+            result.put("delimiter", rs.getString("DELIMITER"));
+            result.put("fileColumns", rs.getArray("FILE_COLUMNS").getArray());
+            result.put("requiredColumns", rs.getArray("REQUIRED_COLUMNS").getArray());
+            result.put("dbColumns", rs.getArray("DB_COLUMNS").getArray());
+            result.put("dataTypes", rs.getArray("DATATYPES").getArray());
+            result.put("destTable", rs.getString("DEST_TABLE"));
+            result.put("skipException", rs.getString("SKIP_EXCEPTION"));
+            result.put("appendData", rs.getString("APPEND_DATA"));
+            return result;
+        });
+    }
+
     private String arrayToString(Object[] array) {
         StringBuilder sb = new StringBuilder();
         for (Object obj : array) {
@@ -99,21 +74,3 @@ public class JobParametersGenerator {
         return sb.length() > 0 ? sb.substring(0, sb.length() - 1) : "";
     }
 }
-```
-
-### Explanation
-
-1. **JobConfigService**: Fetches data from the `JOB_CONFIGURATIONS` table based on `configId`. The `mapRow` method maps the SQL result to a `Map<String, Object>`.
-
-2. **JobParametersGenerator**: Uses the fetched data to generate `JobParameters`.
-
-    - **File Path**: Reads the file path from the fetched data and counts the lines in the file.
-    - **Convert Array to String**: Converts `oracle.sql.ARRAY` to a comma-separated string using the `arrayToString` method.
-
-### Notes
-
-- **Ensure the Database Connection**: Verify that your database connection details are correctly configured in your `application.properties` or `application.yml`.
-- **Error Handling**: Add appropriate error handling to manage exceptions, such as `SQLException` or `IOException`.
-- **Refactor if Needed**: Customize the `mapRow` method and `JobParametersGenerator` class as needed to fit your specific requirements.
-
-This approach allows you to dynamically fetch configuration data from the database and create `JobParameters` for your job based on that data.
