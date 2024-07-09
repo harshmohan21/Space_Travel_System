@@ -1,88 +1,167 @@
-    import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import org.springframework.batch.core.JobParameters;
-import org.springframework.batch.core.JobParametersBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
+To create an API that displays the `jobStatus` of a Spring Batch job, you can follow these steps:
 
-import java.io.File;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+1. **Create a Spring Boot application with Spring Batch and Spring Web dependencies.**
+2. **Create a REST controller to handle the API request.**
+3. **Use Spring Batch's `JobExplorer` to query job metadata, including the job status.**
 
-@Service
-public class JobParameterService {
+Here's an example to illustrate this:
 
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
+### Step 1: Set Up Your Spring Boot Application
 
-    public JobParameters createJobParam(MultipartFile jsonFile) throws Exception {
-        String configId = "1"; // Hardcoded for demonstration
-        String tableName = "JOB_CONFIGURATIONS"; // Ensure this matches your table name
+Include the necessary dependencies in your `pom.xml` (for Maven) or `build.gradle` (for Gradle).
 
-        String sql = "SELECT * FROM " + tableName + " WHERE CONFIG_ID = ?";
-        List<Map<String, Object>> result = jdbcTemplate.queryForList(sql, configId);
+#### Maven
+```xml
+<dependencies>
+    <!-- Spring Boot Starter Web -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
 
-        if (result.isEmpty()) {
-            throw new RuntimeException("No configuration found for configId: " + configId);
-        }
+    <!-- Spring Batch -->
+    <dependency>
+        <groupId>org.springframework.batch</groupId>
+        <artifactId>spring-batch-core</artifactId>
+    </dependency>
 
-        Map<String, Object> config = result.get(0);
+    <!-- H2 Database for testing purposes -->
+    <dependency>
+        <groupId>com.h2database</groupId>
+        <scope>runtime</scope>
+    </dependency>
+</dependencies>
+```
 
-        // Extract data from the result
-        String filePath = (String) config.get("FILEPATH");
-        String delimiter = (String) config.get("DELIMITER");
-        String destTable = (String) config.get("DEST_TABLE");
-        String skipException = (String) config.get("SKIP_EXCEPTION");
-        String appendData = (String) config.get("APPEND_DATA");
+#### Gradle
+```groovy
+dependencies {
+    // Spring Boot Starter Web
+    implementation 'org.springframework.boot:spring-boot-starter-web'
 
-        Path path = Paths.get(filePath);
-        long lineCount = Files.lines(path).count();
+    // Spring Batch
+    implementation 'org.springframework.batch:spring-batch-core'
 
-        // Convert array columns to comma-separated strings
-        String fileColumns = arrayToString((Object[]) ((java.sql.Array) config.get("FILE_COLUMNS")).getArray());
-        String requiredColumns = arrayToString((Object[]) ((java.sql.Array) config.get("REQUIRED_COLUMNS")).getArray());
-        String dbColumns = arrayToString((Object[]) ((java.sql.Array) config.get("DB_COLUMNS")).getArray());
-        String dataTypes = arrayToString((Object[]) ((java.sql.Array) config.get("DATATYPES")).getArray());
+    // H2 Database for testing purposes
+    runtimeOnly 'com.h2database:h2'
+}
+```
 
-        // Transfer the MultipartFile to a temporary file
-        File tempFile = File.createTempFile("uploaded-", "-json");
-        jsonFile.transferTo(tempFile);
-        String absolutePath = tempFile.getAbsolutePath();
-        File jsonTempFile = new File(absolutePath);
+### Step 2: Configure Spring Batch
+Ensure your Spring Batch configuration is set up. This includes setting up the JobRepository, JobLauncher, and JobExplorer beans.
 
-        // Parse JSON file
-        ObjectMapper objectMapper = new ObjectMapper();
-        JsonNode rootNode = objectMapper.readTree(jsonTempFile);
-        ObjectNode objectNode = (ObjectNode) rootNode;
+```java
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import javax.sql.DataSource;
+import org.springframework.batch.core.explore.JobExplorer;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.repository.support.JobRepositoryFactoryBean;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.core.launch.support.SimpleJobLauncher;
+import org.springframework.transaction.PlatformTransactionManager;
 
-        // Create JobParameters
-        return new JobParametersBuilder()
-                .addString("filePath", filePath)
-                .addString("delimiter", delimiter)
-                .addString("fileColumns", fileColumns)
-                .addString("requiredColumns", requiredColumns)
-                .addString("dbColumns", dbColumns)
-                .addString("dataTypes", dataTypes)
-                .addString("destTable", destTable)
-                .addString("skipException", skipException)
-                .addString("appendData", appendData)
-                .addLong("lineCount", lineCount)
-                .addLong("startAt", System.currentTimeMillis())
-                .toJobParameters();
+@Configuration
+@EnableBatchProcessing
+public class BatchConfiguration {
+
+    @Bean
+    public JobRepository jobRepository(DataSource dataSource, PlatformTransactionManager transactionManager) throws Exception {
+        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+        factory.setDataSource(dataSource);
+        factory.setTransactionManager(transactionManager);
+        factory.setIsolationLevelForCreate("ISOLATION_SERIALIZABLE");
+        factory.setTablePrefix("BATCH_");
+        return factory.getObject();
     }
 
-    private String arrayToString(Object[] array) {
-        StringBuilder sb = new StringBuilder();
-        for (Object obj : array) {
-            sb.append(obj.toString()).append(",");
-        }
-        return sb.length() > 0 ? sb.substring(0, sb.length() - 1) : "";
+    @Bean
+    public JobLauncher jobLauncher(JobRepository jobRepository) {
+        SimpleJobLauncher jobLauncher = new SimpleJobLauncher();
+        jobLauncher.setJobRepository(jobRepository);
+        return jobLauncher;
+    }
+
+    @Bean
+    public JobExplorer jobExplorer(DataSource dataSource) throws Exception {
+        JobExplorerFactoryBean jobExplorerFactoryBean = new JobExplorerFactoryBean();
+        jobExplorerFactoryBean.setDataSource(dataSource);
+        jobExplorerFactoryBean.setTablePrefix("BATCH_");
+        return jobExplorerFactoryBean.getObject();
     }
 }
+```
+
+### Step 3: Create a REST Controller
+
+Create a REST controller that uses `JobExplorer` to fetch and display the job status.
+
+```java
+import org.springframework.batch.core.explore.JobExplorer;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.BatchStatus;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RestController;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+
+@RestController
+public class JobStatusController {
+
+    @Autowired
+    private JobExplorer jobExplorer;
+
+    @GetMapping("/jobstatus/{jobName}")
+    public Map<String, Object> getJobStatus(@PathVariable String jobName) {
+        List<JobInstance> jobInstances = jobExplorer.getJobInstances(jobName, 0, 1);
+        Map<String, Object> response = new HashMap<>();
+
+        if (jobInstances.isEmpty()) {
+            response.put("message", "No job instance found with the given name");
+        } else {
+            JobInstance jobInstance = jobInstances.get(0);
+            JobExecution lastJobExecution = jobExplorer.getJobExecutions(jobInstance).get(0);
+            BatchStatus jobStatus = lastJobExecution.getStatus();
+
+            response.put("jobName", jobName);
+            response.put("jobInstanceId", jobInstance.getInstanceId());
+            response.put("jobStatus", jobStatus);
+            response.put("startTime", lastJobExecution.getStartTime());
+            response.put("endTime", lastJobExecution.getEndTime());
+            response.put("exitCode", lastJobExecution.getExitStatus().getExitCode());
+            response.put("exitDescription", lastJobExecution.getExitStatus().getExitDescription());
+        }
+
+        return response;
+    }
+}
+```
+
+### Step 4: Run the Application
+
+Run your Spring Boot application and access the endpoint to get the job status.
+
+Example request:
+```
+http://localhost:8080/jobstatus/yourJobName
+```
+
+This will return a JSON response with the job status and other details:
+
+```json
+{
+    "jobName": "yourJobName",
+    "jobInstanceId": 1,
+    "jobStatus": "COMPLETED",
+    "startTime": "2023-07-09T10:15:30",
+    "endTime": "2023-07-09T10:16:00",
+    "exitCode": "COMPLETED",
+    "exitDescription": ""
+}
+```
+
+This setup allows you to expose the job status of your Spring Batch jobs through a REST API.
