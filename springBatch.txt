@@ -1,167 +1,247 @@
-To create an API that displays the `jobStatus` of a Spring Batch job, you can follow these steps:
+To manage the connection and transaction at the step level and ensure that if an error occurs during any chunk, all previously written chunks are rolled back, we need to use a `StepListener` to handle the transaction management. Here’s how you can modify your Spring Batch configuration to achieve this:
 
-1. **Create a Spring Boot application with Spring Batch and Spring Web dependencies.**
-2. **Create a REST controller to handle the API request.**
-3. **Use Spring Batch's `JobExplorer` to query job metadata, including the job status.**
-
-Here's an example to illustrate this:
-
-### Step 1: Set Up Your Spring Boot Application
-
-Include the necessary dependencies in your `pom.xml` (for Maven) or `build.gradle` (for Gradle).
-
-#### Maven
-```xml
-<dependencies>
-    <!-- Spring Boot Starter Web -->
-    <dependency>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-
-    <!-- Spring Batch -->
-    <dependency>
-        <groupId>org.springframework.batch</groupId>
-        <artifactId>spring-batch-core</artifactId>
-    </dependency>
-
-    <!-- H2 Database for testing purposes -->
-    <dependency>
-        <groupId>com.h2database</groupId>
-        <scope>runtime</scope>
-    </dependency>
-</dependencies>
-```
-
-#### Gradle
-```groovy
-dependencies {
-    // Spring Boot Starter Web
-    implementation 'org.springframework.boot:spring-boot-starter-web'
-
-    // Spring Batch
-    implementation 'org.springframework.batch:spring-batch-core'
-
-    // H2 Database for testing purposes
-    runtimeOnly 'com.h2database:h2'
-}
-```
-
-### Step 2: Configure Spring Batch
-Ensure your Spring Batch configuration is set up. This includes setting up the JobRepository, JobLauncher, and JobExplorer beans.
+1. **Create a StepListener**:
+   - Implement a `StepListener` to manage transactions at the step level.
 
 ```java
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import javax.sql.DataSource;
-import org.springframework.batch.core.explore.JobExplorer;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.repository.support.JobRepositoryFactoryBean;
-import org.springframework.batch.core.launch.JobLauncher;
-import org.springframework.batch.core.launch.support.SimpleJobLauncher;
-import org.springframework.transaction.PlatformTransactionManager;
-
-@Configuration
-@EnableBatchProcessing
-public class BatchConfiguration {
-
-    @Bean
-    public JobRepository jobRepository(DataSource dataSource, PlatformTransactionManager transactionManager) throws Exception {
-        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
-        factory.setDataSource(dataSource);
-        factory.setTransactionManager(transactionManager);
-        factory.setIsolationLevelForCreate("ISOLATION_SERIALIZABLE");
-        factory.setTablePrefix("BATCH_");
-        return factory.getObject();
-    }
-
-    @Bean
-    public JobLauncher jobLauncher(JobRepository jobRepository) {
-        SimpleJobLauncher jobLauncher = new SimpleJobLauncher();
-        jobLauncher.setJobRepository(jobRepository);
-        return jobLauncher;
-    }
-
-    @Bean
-    public JobExplorer jobExplorer(DataSource dataSource) throws Exception {
-        JobExplorerFactoryBean jobExplorerFactoryBean = new JobExplorerFactoryBean();
-        jobExplorerFactoryBean.setDataSource(dataSource);
-        jobExplorerFactoryBean.setTablePrefix("BATCH_");
-        return jobExplorerFactoryBean.getObject();
-    }
-}
-```
-
-### Step 3: Create a REST Controller
-
-Create a REST controller that uses `JobExplorer` to fetch and display the job status.
-
-```java
-import org.springframework.batch.core.explore.JobExplorer;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.BatchStatus;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.core.listener.StepListenerSupport;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RestController;
-import java.util.List;
-import java.util.Map;
-import java.util.HashMap;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 
-@RestController
-public class JobStatusController {
+public class TransactionalStepListener extends StepListenerSupport<Map<String, Object>, Map<String, Object>> {
 
     @Autowired
-    private JobExplorer jobExplorer;
+    private JdbcTemplate jdbcTemplate;
 
-    @GetMapping("/jobstatus/{jobName}")
-    public Map<String, Object> getJobStatus(@PathVariable String jobName) {
-        List<JobInstance> jobInstances = jobExplorer.getJobInstances(jobName, 0, 1);
-        Map<String, Object> response = new HashMap<>();
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
-        if (jobInstances.isEmpty()) {
-            response.put("message", "No job instance found with the given name");
+    private TransactionStatus transactionStatus;
+
+    @Override
+    public void beforeStep(StepExecution stepExecution) {
+        transactionStatus = transactionManager.getTransaction(new DefaultTransactionDefinition());
+    }
+
+    @Override
+    public ExitStatus afterStep(StepExecution stepExecution) {
+        if (stepExecution.getExitStatus().equals(ExitStatus.COMPLETED)) {
+            transactionManager.commit(transactionStatus);
         } else {
-            JobInstance jobInstance = jobInstances.get(0);
-            JobExecution lastJobExecution = jobExplorer.getJobExecutions(jobInstance).get(0);
-            BatchStatus jobStatus = lastJobExecution.getStatus();
-
-            response.put("jobName", jobName);
-            response.put("jobInstanceId", jobInstance.getInstanceId());
-            response.put("jobStatus", jobStatus);
-            response.put("startTime", lastJobExecution.getStartTime());
-            response.put("endTime", lastJobExecution.getEndTime());
-            response.put("exitCode", lastJobExecution.getExitStatus().getExitCode());
-            response.put("exitDescription", lastJobExecution.getExitStatus().getExitDescription());
+            transactionManager.rollback(transactionStatus);
         }
-
-        return response;
+        return stepExecution.getExitStatus();
     }
 }
 ```
 
-### Step 4: Run the Application
+2. **Modify `BatchConfig` to Use `TransactionalStepListener`**:
+   - Register the `TransactionalStepListener` with your step configuration.
 
-Run your Spring Boot application and access the endpoint to get the job status.
+```java
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.launch.support.RunIdIncrementer;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.core.step.builder.StepBuilderHelper;
+import org.springframework.batch.core.step.builder.StepListenerBuilder;
+import org.springframework.batch.core.step.builder.StepListenerBuilderHelper;
+import org.springframework.batch.item.ItemReader;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.file.FlatFileItemReader;
+import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 
-Example request:
-```
-http://localhost:8080/jobstatus/yourJobName
-```
+import javax.sql.DataSource;
+import java.io.File;
+import java.util.Map;
 
-This will return a JSON response with the job status and other details:
+@Configuration
+public class BatchConfig {
 
-```json
-{
-    "jobName": "yourJobName",
-    "jobInstanceId": 1,
-    "jobStatus": "COMPLETED",
-    "startTime": "2023-07-09T10:15:30",
-    "endTime": "2023-07-09T10:16:00",
-    "exitCode": "COMPLETED",
-    "exitDescription": ""
+    @Autowired
+    private JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    private StepBuilderFactory stepBuilderFactory;
+
+    @Autowired
+    private DataSource dataSource;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Value("${destination.table}")
+    private String destinationTable;
+
+    @Bean
+    public Job jobBean(JobCompletionNotificationImpl listener, Step step) {
+        return jobBuilderFactory.get("job")
+                .incrementer(new RunIdIncrementer())
+                .listener(listener)
+                .start(step)
+                .build();
+    }
+
+    @Bean
+    public Step step(ItemReader<Map<String, Object>> reader,
+                     ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor,
+                     ItemWriter<Map<String, Object>> itemWriter) {
+        return stepBuilderFactory.get("jobStep")
+                .<Map<String, Object>, Map<String, Object>>chunk(10)
+                .reader(reader)
+                .processor(itemProcessor)
+                .writer(itemWriter)
+                .listener(new TransactionalStepListener()) // Register the listener
+                .build();
+    }
+
+    @Bean
+    @StepScope
+    public FlatFileItemReader<Map<String, Object>> reader(@Value("#{jobParameters}") Map<String, Object> jobParameters) throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        String input = (String) jobParameters.get("jsonFile");
+        ObjectNode obj = (ObjectNode) objectMapper.readTree(input);
+        JsonNode filePath = obj.get("filePath");
+
+        File file = new File(filePath.asText());
+        if (!file.exists()) {
+            throw new RuntimeException("File '" + filePath.asText() + "' does not exist.");
+        }
+        FileSystemResource resource = new FileSystemResource(file);
+
+        return new FlatFileItemReaderBuilder<Map<String, Object>>()
+                .name("itemReader")
+                .resource(resource)
+                .linesToSkip(1)
+                .lineMapper(lineMapper(obj))
+                .build();
+    }
+
+    private LineMapper<Map<String, Object>> lineMapper(ObjectNode obj) {
+        // Implement your lineMapper logic here
+        return null; // Replace with your implementation
+    }
+
+    @Bean
+    public ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor() {
+        return new CustomItemProcessor();
+    }
+
+    @Bean
+    @StepScope
+    public ItemWriter<Map<String, Object>> itemWriter() {
+        return new CustomItemWriter(dataSource, destinationTable);
+    }
 }
 ```
 
-This setup allows you to expose the job status of your Spring Batch jobs through a REST API.
+3. **Update `CustomItemWriter`**:
+   - Ensure the `CustomItemWriter` is only responsible for writing items and not handling transactions.
+
+```java
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.JdbcBatchItemWriter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+
+import javax.sql.DataSource;
+import java.util.List;
+import java.util.Map;
+
+public class CustomItemWriter implements ItemWriter<Map<String, Object>> {
+
+    private final JdbcTemplate jdbcTemplate;
+    private final String destTable;
+
+    @Autowired
+    public CustomItemWriter(DataSource dataSource, String destTable) {
+        this.jdbcTemplate = new JdbcTemplate(dataSource);
+        this.destTable = destTable;
+    }
+
+    @Override
+    public void write(List<? extends Map<String, Object>> items) throws Exception {
+        if (!items.isEmpty()) {
+            // Ensure table exists and is empty before writing
+            ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+
+            // Example: Build dynamic SQL based on first item in the chunk
+            Map<String, Object> sampleItem = items.get(0);
+            String sql = buildDynamicSql(sampleItem, destTable);
+
+            // Configure JdbcBatchItemWriter
+            JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriter<>();
+            writer.setItemSqlParameterSourceProvider(this::mapToSqlParameterSource);
+            writer.setSql(sql);
+            writer.setDataSource(jdbcTemplate.getDataSource());
+            writer.afterPropertiesSet(); // Initialize writer
+
+            // Execute write operation
+            writer.write(items);
+        }
+    }
+
+    private void ensureTableExistsAndIsEmpty(JdbcTemplate jdbcTemplate, String tableName) {
+        try {
+            jdbcTemplate.execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+            System.out.println("Table " + tableName + " exists.");
+        } catch (Exception e) {
+            throw new RuntimeException("Table " + tableName + " does not exist.", e);
+        }
+        try {
+            jdbcTemplate.execute("TRUNCATE TABLE " + tableName);
+            System.out.println("Table " + tableName + " has been emptied.");
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to empty table " + tableName + ".", e);
+        }
+    }
+
+    private String buildDynamicSql(Map<String, Object> sampleItem, String destTable) {
+        String columns = String.join(", ", sampleItem.keySet());
+        String placeholders = sampleItem.keySet().stream()
+                .map(key -> ":" + key)
+                .reduce((s1, s2) -> s1 + ", " + s2)
+                .orElse("");
+        return "INSERT INTO " + destTable + " (" + columns + ") VALUES (" + placeholders + ")";
+    }
+
+    private SqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
+        MapSqlParameterSource parameterSource = new MapSqlParameterSource();
+        item.forEach(parameterSource::addValue);
+        return parameterSource;
+    }
+}
+```
+
+### Explanation:
+
+- **TransactionalStepListener**:
+  - Manages the transaction boundaries at the step level.
+  - Begins a new transaction in `beforeStep`.
+  - Commits the transaction if the step completes successfully in `afterStep`.
+  - Rolls back the transaction if the step fails in `afterStep`.
+
+- **BatchConfig**:
+  - Registers `TransactionalStepListener` with the step to manage transactions.
+  - Ensures that the step is treated as a single transactional unit.
+
+- **CustomItemWriter**:
+  - Responsible only for writing items.
+  - No transaction management logic inside `CustomItemWriter`.
+
+This setup ensures that if any error occurs during the processing of any chunk, the entire step's transaction is rolled back, including all previously written chunks.
