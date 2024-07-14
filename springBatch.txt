@@ -1,163 +1,105 @@
-To create a listener in your Spring Batch application that prints any exceptions encountered while parsing or writing data and specifies which record caused it, you can implement a custom `ItemReadListener`, `ItemWriteListener`, and `ItemProcessListener`.
+To print only the record that caused the failure rather than the entire chunk, you can modify your `ItemWriter` to throw a custom exception that includes the problematic record. Then, you can catch this exception in your `CustomItemWriteListener` and print the specific record.
 
-Here's how to do it:
+Here's how you can achieve this:
 
-### 1. Implement Custom Listeners
+1. **Create a Custom Exception**: Define a custom exception that carries the record causing the failure.
 
-#### CustomItemReadListener
+2. **Modify the ItemWriter**: Modify the `ItemWriter` to throw the custom exception when an error occurs.
 
-This listener will handle exceptions during the reading phase.
+3. **Update the CustomItemWriteListener**: Update the listener to handle the custom exception and print the specific record causing the issue.
+
+### Step-by-Step Implementation
+
+#### 1. Create a Custom Exception
 
 ```java
-import org.springframework.batch.core.ItemReadListener;
-import org.springframework.stereotype.Component;
+public class ItemWriteException extends Exception {
+    private final Map<String, Object> problematicRecord;
 
-@Component
-public class CustomItemReadListener implements ItemReadListener<Person> {
-
-    @Override
-    public void beforeRead() {
-        // Optional: Add logic before reading if needed
+    public ItemWriteException(String message, Map<String, Object> problematicRecord) {
+        super(message);
+        this.problematicRecord = problematicRecord;
     }
 
-    @Override
-    public void afterRead(Person item) {
-        // Optional: Add logic after reading if needed
-    }
-
-    @Override
-    public void onReadError(Exception ex) {
-        System.err.println("Exception encountered while reading: " + ex.getMessage());
+    public Map<String, Object> getProblematicRecord() {
+        return problematicRecord;
     }
 }
 ```
 
-#### CustomItemWriteListener
+#### 2. Modify the ItemWriter
 
-This listener will handle exceptions during the writing phase.
+Modify your `ItemWriter` to throw `ItemWriteException` for problematic records.
+
+```java
+import org.springframework.batch.item.ItemWriter;
+
+import java.util.List;
+import java.util.Map;
+
+public class CustomItemWriter implements ItemWriter<Map<String, Object>> {
+
+    @Override
+    public void write(List<? extends Map<String, Object>> items) throws Exception {
+        for (Map<String, Object> item : items) {
+            try {
+                // Your write logic here
+                // If an error occurs, throw the custom exception
+                if (/* some condition that causes an error */) {
+                    throw new ItemWriteException("Error writing item", item);
+                }
+            } catch (ItemWriteException e) {
+                throw e;  // Re-throw the custom exception
+            } catch (Exception e) {
+                throw new ItemWriteException("Unexpected error writing item", item);
+            }
+        }
+    }
+}
+```
+
+#### 3. Update the CustomItemWriteListener
+
+Update the listener to handle the custom exception and print the specific record causing the issue.
 
 ```java
 import org.springframework.batch.core.ItemWriteListener;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 
 @Component
-public class CustomItemWriteListener implements ItemWriteListener<Person> {
+public class CustomItemWriteListener implements ItemWriteListener<Map<String, Object>> {
 
     @Override
-    public void beforeWrite(List<? extends Person> items) {
+    public void beforeWrite(List<? extends Map<String, Object>> items) {
         // Optional: Add logic before writing if needed
     }
 
     @Override
-    public void afterWrite(List<? extends Person> items) {
+    public void afterWrite(List<? extends Map<String, Object>> items) {
         // Optional: Add logic after writing if needed
     }
 
     @Override
-    public void onWriteError(Exception ex, List<? extends Person> items) {
-        System.err.println("Exception encountered while writing: " + ex.getMessage());
-        System.err.println("Records causing the issue: " + items);
+    public void onWriteError(Exception ex, List<? extends Map<String, Object>> items) {
+        if (ex instanceof ItemWriteException) {
+            ItemWriteException iwe = (ItemWriteException) ex;
+            System.err.println("Exception encountered while writing: " + ex.getMessage());
+            System.err.println("Record causing the issue: " + iwe.getProblematicRecord());
+        } else {
+            System.err.println("Exception encountered while writing: " + ex.getMessage());
+            System.err.println("Records causing the issue: " + items);
+        }
     }
 }
 ```
 
-#### CustomItemProcessListener
+### Summary
 
-This listener will handle exceptions during the processing phase.
+1. **Custom Exception**: Create a custom exception (`ItemWriteException`) that holds the problematic record.
+2. **Custom ItemWriter**: Modify your `ItemWriter` to throw the custom exception when an error occurs.
+3. **Custom Listener**: Update your `CustomItemWriteListener` to handle the custom exception and print the specific problematic record.
 
-```java
-import org.springframework.batch.core.ItemProcessListener;
-import org.springframework.stereotype.Component;
-
-@Component
-public class CustomItemProcessListener implements ItemProcessListener<Person, Person> {
-
-    @Override
-    public void beforeProcess(Person item) {
-        // Optional: Add logic before processing if needed
-    }
-
-    @Override
-    public void afterProcess(Person item, Person result) {
-        // Optional: Add logic after processing if needed
-    }
-
-    @Override
-    public void onProcessError(Person item, Exception ex) {
-        System.err.println("Exception encountered while processing: " + ex.getMessage());
-        System.err.println("Record causing the issue: " + item);
-    }
-}
-```
-
-### 2. Register Listeners in Your Step Configuration
-
-Register these listeners in your step configuration to ensure they are used during the batch process.
-
-```java
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
-import org.springframework.batch.core.launch.support.RunIdIncrementer;
-import org.springframework.batch.core.Job;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.transaction.PlatformTransactionManager;
-
-@Configuration
-@EnableBatchProcessing
-public class BatchConfig {
-
-    @Bean
-    public Job importUserJob(JobBuilderFactory jobBuilderFactory, Step step1) {
-        return jobBuilderFactory.get("importUserJob")
-                .incrementer(new RunIdIncrementer())
-                .flow(step1)
-                .end()
-                .build();
-    }
-
-    @Bean
-    public Step step1(StepBuilderFactory stepBuilderFactory,
-                      ItemReader<Person> reader,
-                      ItemProcessor<Person, Person> processor,
-                      ItemWriter<Person> writer,
-                      PlatformTransactionManager transactionManager,
-                      CustomItemReadListener readListener,
-                      CustomItemWriteListener writeListener,
-                      CustomItemProcessListener processListener) {
-
-        return stepBuilderFactory.get("step1")
-                .<Person, Person>chunk(10)
-                .reader(reader)
-                .processor(processor)
-                .writer(writer)
-                .transactionManager(transactionManager)
-                .listener(readListener)
-                .listener(writeListener)
-                .listener(processListener)
-                .faultTolerant()
-                .retryLimit(3)
-                .retry(Exception.class)
-                .skipLimit(10)
-                .skip(Exception.class)
-                .build();
-    }
-}
-```
-
-### Explanation
-
-1. **Custom Listeners**:
-   - **CustomItemReadListener**: Logs any exceptions encountered during the reading phase.
-   - **CustomItemWriteListener**: Logs any exceptions encountered during the writing phase and prints the records causing the issue.
-   - **CustomItemProcessListener**: Logs any exceptions encountered during the processing phase and prints the record causing the issue.
-
-2. **Step Configuration**:
-   - Register the custom listeners in the step configuration using the `.listener` method.
-   - Ensure fault tolerance by setting retry and skip limits.
-
-By following these steps, you will have a Spring Batch application that logs exceptions encountered during the reading, processing, and writing phases, and specifies which records caused the exceptions. This can be extremely helpful for debugging and handling errors in your batch process.
+By implementing these changes, your application will only print the specific record causing the failure during the write operation.
