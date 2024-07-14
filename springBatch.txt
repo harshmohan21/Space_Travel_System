@@ -1,247 +1,57 @@
-To manage the connection and transaction at the step level and ensure that if an error occurs during any chunk, all previously written chunks are rolled back, we need to use a `StepListener` to handle the transaction management. Here’s how you can modify your Spring Batch configuration to achieve this:
-
-1. **Create a StepListener**:
-   - Implement a `StepListener` to manage transactions at the step level.
-
-```java
-import org.springframework.batch.core.StepExecution;
-import org.springframework.batch.core.listener.StepListenerSupport;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.DefaultTransactionDefinition;
-
-public class TransactionalStepListener extends StepListenerSupport<Map<String, Object>, Map<String, Object>> {
-
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
-
-    @Autowired
-    private PlatformTransactionManager transactionManager;
-
-    private TransactionStatus transactionStatus;
-
-    @Override
-    public void beforeStep(StepExecution stepExecution) {
-        transactionStatus = transactionManager.getTransaction(new DefaultTransactionDefinition());
+public class UnescapeUtility {
+    public static String unescapeString(String input) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c == '\\' && i + 1 < input.length()) {
+                char nextChar = input.charAt(i + 1);
+                switch (nextChar) {
+                    case 't':
+                        builder.append('\t');
+                        i++;
+                        break;
+                    case 'n':
+                        builder.append('\n');
+                        i++;
+                        break;
+                    case 'r':
+                        builder.append('\r');
+                        i++;
+                        break;
+                    case 'b':
+                        builder.append('\b');
+                        i++;
+                        break;
+                    case 'f':
+                        builder.append('\f');
+                        i++;
+                        break;
+                    case '\\':
+                        builder.append('\\');
+                        i++;
+                        break;
+                    case '\"':
+                        builder.append('\"');
+                        i++;
+                        break;
+                    case '\'':
+                        builder.append('\'');
+                        i++;
+                        break;
+                    default:
+                        builder.append(c);
+                        break;
+                }
+            } else {
+                builder.append(c);
+            }
+        }
+        return builder.toString();
     }
 
-    @Override
-    public ExitStatus afterStep(StepExecution stepExecution) {
-        if (stepExecution.getExitStatus().equals(ExitStatus.COMPLETED)) {
-            transactionManager.commit(transactionStatus);
-        } else {
-            transactionManager.rollback(transactionStatus);
-        }
-        return stepExecution.getExitStatus();
+    public static void main(String[] args) {
+        String originalString = "Some\\tstring\\nwith\\tescape\\tcharacters";
+        String unescapedString = unescapeString(originalString);
+        System.out.println(unescapedString);
     }
 }
-```
-
-2. **Modify `BatchConfig` to Use `TransactionalStepListener`**:
-   - Register the `TransactionalStepListener` with your step configuration.
-
-```java
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.core.launch.support.RunIdIncrementer;
-import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.core.step.builder.StepBuilderHelper;
-import org.springframework.batch.core.step.builder.StepListenerBuilder;
-import org.springframework.batch.core.step.builder.StepListenerBuilderHelper;
-import org.springframework.batch.item.ItemReader;
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.file.FlatFileItemReader;
-import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.DefaultTransactionDefinition;
-
-import javax.sql.DataSource;
-import java.io.File;
-import java.util.Map;
-
-@Configuration
-public class BatchConfig {
-
-    @Autowired
-    private JobBuilderFactory jobBuilderFactory;
-
-    @Autowired
-    private StepBuilderFactory stepBuilderFactory;
-
-    @Autowired
-    private DataSource dataSource;
-
-    @Autowired
-    private PlatformTransactionManager transactionManager;
-
-    @Value("${destination.table}")
-    private String destinationTable;
-
-    @Bean
-    public Job jobBean(JobCompletionNotificationImpl listener, Step step) {
-        return jobBuilderFactory.get("job")
-                .incrementer(new RunIdIncrementer())
-                .listener(listener)
-                .start(step)
-                .build();
-    }
-
-    @Bean
-    public Step step(ItemReader<Map<String, Object>> reader,
-                     ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor,
-                     ItemWriter<Map<String, Object>> itemWriter) {
-        return stepBuilderFactory.get("jobStep")
-                .<Map<String, Object>, Map<String, Object>>chunk(10)
-                .reader(reader)
-                .processor(itemProcessor)
-                .writer(itemWriter)
-                .listener(new TransactionalStepListener()) // Register the listener
-                .build();
-    }
-
-    @Bean
-    @StepScope
-    public FlatFileItemReader<Map<String, Object>> reader(@Value("#{jobParameters}") Map<String, Object> jobParameters) throws Exception {
-        ObjectMapper objectMapper = new ObjectMapper();
-        String input = (String) jobParameters.get("jsonFile");
-        ObjectNode obj = (ObjectNode) objectMapper.readTree(input);
-        JsonNode filePath = obj.get("filePath");
-
-        File file = new File(filePath.asText());
-        if (!file.exists()) {
-            throw new RuntimeException("File '" + filePath.asText() + "' does not exist.");
-        }
-        FileSystemResource resource = new FileSystemResource(file);
-
-        return new FlatFileItemReaderBuilder<Map<String, Object>>()
-                .name("itemReader")
-                .resource(resource)
-                .linesToSkip(1)
-                .lineMapper(lineMapper(obj))
-                .build();
-    }
-
-    private LineMapper<Map<String, Object>> lineMapper(ObjectNode obj) {
-        // Implement your lineMapper logic here
-        return null; // Replace with your implementation
-    }
-
-    @Bean
-    public ItemProcessor<Map<String, Object>, Map<String, Object>> itemProcessor() {
-        return new CustomItemProcessor();
-    }
-
-    @Bean
-    @StepScope
-    public ItemWriter<Map<String, Object>> itemWriter() {
-        return new CustomItemWriter(dataSource, destinationTable);
-    }
-}
-```
-
-3. **Update `CustomItemWriter`**:
-   - Ensure the `CustomItemWriter` is only responsible for writing items and not handling transactions.
-
-```java
-import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.database.JdbcBatchItemWriter;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
-import org.springframework.jdbc.core.namedparam.SqlParameterSource;
-
-import javax.sql.DataSource;
-import java.util.List;
-import java.util.Map;
-
-public class CustomItemWriter implements ItemWriter<Map<String, Object>> {
-
-    private final JdbcTemplate jdbcTemplate;
-    private final String destTable;
-
-    @Autowired
-    public CustomItemWriter(DataSource dataSource, String destTable) {
-        this.jdbcTemplate = new JdbcTemplate(dataSource);
-        this.destTable = destTable;
-    }
-
-    @Override
-    public void write(List<? extends Map<String, Object>> items) throws Exception {
-        if (!items.isEmpty()) {
-            // Ensure table exists and is empty before writing
-            ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
-
-            // Example: Build dynamic SQL based on first item in the chunk
-            Map<String, Object> sampleItem = items.get(0);
-            String sql = buildDynamicSql(sampleItem, destTable);
-
-            // Configure JdbcBatchItemWriter
-            JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriter<>();
-            writer.setItemSqlParameterSourceProvider(this::mapToSqlParameterSource);
-            writer.setSql(sql);
-            writer.setDataSource(jdbcTemplate.getDataSource());
-            writer.afterPropertiesSet(); // Initialize writer
-
-            // Execute write operation
-            writer.write(items);
-        }
-    }
-
-    private void ensureTableExistsAndIsEmpty(JdbcTemplate jdbcTemplate, String tableName) {
-        try {
-            jdbcTemplate.execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
-            System.out.println("Table " + tableName + " exists.");
-        } catch (Exception e) {
-            throw new RuntimeException("Table " + tableName + " does not exist.", e);
-        }
-        try {
-            jdbcTemplate.execute("TRUNCATE TABLE " + tableName);
-            System.out.println("Table " + tableName + " has been emptied.");
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to empty table " + tableName + ".", e);
-        }
-    }
-
-    private String buildDynamicSql(Map<String, Object> sampleItem, String destTable) {
-        String columns = String.join(", ", sampleItem.keySet());
-        String placeholders = sampleItem.keySet().stream()
-                .map(key -> ":" + key)
-                .reduce((s1, s2) -> s1 + ", " + s2)
-                .orElse("");
-        return "INSERT INTO " + destTable + " (" + columns + ") VALUES (" + placeholders + ")";
-    }
-
-    private SqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
-        MapSqlParameterSource parameterSource = new MapSqlParameterSource();
-        item.forEach(parameterSource::addValue);
-        return parameterSource;
-    }
-}
-```
-
-### Explanation:
-
-- **TransactionalStepListener**:
-  - Manages the transaction boundaries at the step level.
-  - Begins a new transaction in `beforeStep`.
-  - Commits the transaction if the step completes successfully in `afterStep`.
-  - Rolls back the transaction if the step fails in `afterStep`.
-
-- **BatchConfig**:
-  - Registers `TransactionalStepListener` with the step to manage transactions.
-  - Ensures that the step is treated as a single transactional unit.
-
-- **CustomItemWriter**:
-  - Responsible only for writing items.
-  - No transaction management logic inside `CustomItemWriter`.
-
-This setup ensures that if any error occurs during the processing of any chunk, the entire step's transaction is rolled back, including all previously written chunks.
