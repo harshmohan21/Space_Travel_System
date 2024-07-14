@@ -1,12 +1,7 @@
-To print only the record that caused the failure rather than the entire chunk, you can modify your `ItemWriter` to throw a custom exception that includes the problematic record. Then, you can catch this exception in your `CustomItemWriteListener` and print the specific record.
+To implement a custom `ItemWriter` that throws a custom exception for problematic records and integrates with your existing `JdbcBatchItemWriter`, you can follow these steps:
 
-Here's how you can achieve this:
-
-1. **Create a Custom Exception**: Define a custom exception that carries the record causing the failure.
-
-2. **Modify the ItemWriter**: Modify the `ItemWriter` to throw the custom exception when an error occurs.
-
-3. **Update the CustomItemWriteListener**: Update the listener to handle the custom exception and print the specific record causing the issue.
+1. **Create a Custom Exception**: Define a custom exception that carries the problematic record.
+2. **Implement the Custom `ItemWriter`**: Modify your `ItemWriter` to throw the custom exception when an error occurs.
 
 ### Step-by-Step Implementation
 
@@ -27,79 +22,141 @@ public class ItemWriteException extends Exception {
 }
 ```
 
-#### 2. Modify the ItemWriter
+#### 2. Implement the Custom `ItemWriter`
 
-Modify your `ItemWriter` to throw `ItemWriteException` for problematic records.
+Update your `ItemWriter` implementation to throw `ItemWriteException` for problematic records and use `JdbcBatchItemWriter`.
 
 ```java
 import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
+import org.springframework.batch.item.database.JdbcBatchItemWriter;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.StepScope;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
 
+import javax.sql.DataSource;
 import java.util.List;
 import java.util.Map;
 
-public class CustomItemWriter implements ItemWriter<Map<String, Object>> {
+@Configuration
+public class BatchConfig {
 
-    @Override
-    public void write(List<? extends Map<String, Object>> items) throws Exception {
-        for (Map<String, Object> item : items) {
-            try {
-                // Your write logic here
-                // If an error occurs, throw the custom exception
-                if (/* some condition that causes an error */) {
-                    throw new ItemWriteException("Error writing item", item);
-                }
-            } catch (ItemWriteException e) {
-                throw e;  // Re-throw the custom exception
-            } catch (Exception e) {
-                throw new ItemWriteException("Unexpected error writing item", item);
+    @Bean
+    @StepScope
+    public ItemWriter<Map<String, Object>> itemWriter(DataSource dataSource, JdbcTemplate jdbcTemplate, @Value("#{jobParameters['dest_table']}") String destTable) {
+        System.out.println("inside itemWriter: " + destTable);
+        ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+        return items -> {
+            if (items.isEmpty()) {
+                return; // No items to write
             }
-        }
+            // Convert the chunk to a list to access the first item
+            Map<String, Object> sampleItem = items.iterator().next();
+            String sql = buildDynamicSql(sampleItem, destTable);
+            JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriterBuilder<Map<String, Object>>()
+                    .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
+                    .sql(sql)
+                    .dataSource(dataSource)
+                    .build();
+            // Open the writer (necessary because we are manually constructing it)
+            writer.afterPropertiesSet();
+            // Write the items
+            try {
+                writer.write(items);
+            } catch (Exception ex) {
+                for (Map<String, Object> item : items) {
+                    try {
+                        writer.write(List.of(item)); // Attempt to write each item individually
+                    } catch (Exception e) {
+                        throw new ItemWriteException("Error writing item", item);
+                    }
+                }
+            }
+        };
+    }
+
+    private MapSqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
+        return new MapSqlParameterSource(item);
+    }
+
+    private String buildDynamicSql(Map<String, Object> sampleItem, String destTable) {
+        // Implement your logic to build dynamic SQL based on the sample item and destination table
+        return "INSERT INTO " + destTable + " (...) VALUES (...)"; // Replace with actual SQL construction logic
+    }
+
+    private void ensureTableExistsAndIsEmpty(JdbcTemplate jdbcTemplate, String destTable) {
+        // Implement your logic to ensure the destination table exists and is empty
     }
 }
 ```
 
-#### 3. Update the CustomItemWriteListener
+### Explanation
 
-Update the listener to handle the custom exception and print the specific record causing the issue.
+1. **Custom Exception**: The `ItemWriteException` class carries the problematic record.
+
+2. **Custom ItemWriter Implementation**:
+   - **ItemWriter**: The `ItemWriter` implementation uses `JdbcBatchItemWriter` to write items to the database.
+   - **Error Handling**: In case of an error, the writer attempts to write each item individually to identify the problematic record and throws a custom `ItemWriteException`.
+
+3. **Helper Methods**:
+   - **mapToSqlParameterSource**: Converts a map to `MapSqlParameterSource` for SQL parameter substitution.
+   - **buildDynamicSql**: Constructs the dynamic SQL based on the sample item and destination table.
+   - **ensureTableExistsAndIsEmpty**: Ensures that the destination table exists and is empty.
+
+### Register the Custom ItemWriter
+
+Make sure to register this custom `ItemWriter` in your step configuration.
 
 ```java
-import org.springframework.batch.core.ItemWriteListener;
-import org.springframework.stereotype.Component;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
+import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
+import org.springframework.batch.core.launch.support.RunIdIncrementer;
+import org.springframework.batch.core.Job;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
-import java.util.List;
-import java.util.Map;
+@Configuration
+@EnableBatchProcessing
+public class BatchJobConfig {
 
-@Component
-public class CustomItemWriteListener implements ItemWriteListener<Map<String, Object>> {
-
-    @Override
-    public void beforeWrite(List<? extends Map<String, Object>> items) {
-        // Optional: Add logic before writing if needed
+    @Bean
+    public Job importUserJob(JobBuilderFactory jobBuilderFactory, Step step1) {
+        return jobBuilderFactory.get("importUserJob")
+                .incrementer(new RunIdIncrementer())
+                .flow(step1)
+                .end()
+                .build();
     }
 
-    @Override
-    public void afterWrite(List<? extends Map<String, Object>> items) {
-        // Optional: Add logic after writing if needed
-    }
+    @Bean
+    public Step step1(StepBuilderFactory stepBuilderFactory,
+                      ItemReader<Map<String, Object>> reader,
+                      ItemProcessor<Map<String, Object>, Map<String, Object>> processor,
+                      ItemWriter<Map<String, Object>> writer,
+                      CustomItemWriteListener writeListener) {
 
-    @Override
-    public void onWriteError(Exception ex, List<? extends Map<String, Object>> items) {
-        if (ex instanceof ItemWriteException) {
-            ItemWriteException iwe = (ItemWriteException) ex;
-            System.err.println("Exception encountered while writing: " + ex.getMessage());
-            System.err.println("Record causing the issue: " + iwe.getProblematicRecord());
-        } else {
-            System.err.println("Exception encountered while writing: " + ex.getMessage());
-            System.err.println("Records causing the issue: " + items);
-        }
+        return stepBuilderFactory.get("step1")
+                .<Map<String, Object>, Map<String, Object>>chunk(10)
+                .reader(reader)
+                .processor(processor)
+                .writer(writer)
+                .listener(writeListener)
+                .faultTolerant()
+                .retryLimit(3)
+                .retry(Exception.class)
+                .skipLimit(10)
+                .skip(Exception.class)
+                .build();
     }
 }
 ```
 
-### Summary
-
-1. **Custom Exception**: Create a custom exception (`ItemWriteException`) that holds the problematic record.
-2. **Custom ItemWriter**: Modify your `ItemWriter` to throw the custom exception when an error occurs.
-3. **Custom Listener**: Update your `CustomItemWriteListener` to handle the custom exception and print the specific problematic record.
-
-By implementing these changes, your application will only print the specific record causing the failure during the write operation.
+By following these steps, you will have a custom `ItemWriter` that integrates with `JdbcBatchItemWriter`, throws custom exceptions for problematic records, and works with the custom listener to print the specific record causing the failure.
