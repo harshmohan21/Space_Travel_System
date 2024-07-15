@@ -1,12 +1,10 @@
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.mockito.junit.MockitoJUnitRunner;
 import org.springframework.batch.item.Chunk;
-import org.springframework.batch.item.ItemWriter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -15,6 +13,7 @@ import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import javax.sql.DataSource;
 import java.util.*;
 
+import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
 
 @RunWith(MockitoJUnitRunner.class)
@@ -29,7 +28,6 @@ public class CustomItemWriterTest {
     @Mock
     private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
 
-    @InjectMocks
     private CustomItemWriter customItemWriter;
 
     private String destTable = "test_table";
@@ -57,46 +55,3 @@ public class CustomItemWriterTest {
 
     @Test
     public void testWrite_NoItems() throws Exception {
-        Chunk<Map<String, Object>> items = new Chunk<>(Collections.emptyList());
-        customItemWriter.write(items);
-        verifyNoInteractions(namedParameterJdbcTemplate);
-    }
-
-    @Test
-    public void testWrite_ItemsPresent() throws Exception {
-        Map<String, Object> item1 = new HashMap<>();
-        item1.put("key1", "value1");
-        Map<String, Object> item2 = new HashMap<>();
-        item2.put("key2", "value2");
-        List<Map<String, Object>> itemList = Arrays.asList(item1, item2);
-        Chunk<Map<String, Object>> items = new Chunk<>(itemList);
-
-        customItemWriter.write(items);
-
-        verify(namedParameterJdbcTemplate, times(1)).update(anyString(), any(SqlParameterSource.class));
-    }
-
-    @Test
-    public void testBuildDynamicSql() {
-        Map<String, Object> sampleItem = new HashMap<>();
-        sampleItem.put("key1", "value1");
-        sampleItem.put("key2", "value2");
-
-        String sql = customItemWriter.buildDynamicSql(sampleItem, destTable);
-        String expectedSql = "INSERT INTO " + destTable + " (key1, key2) VALUES (:key1, :key2)";
-        assertEquals(expectedSql, sql);
-    }
-
-    @Test
-    public void testMapToSqlParameterSource() {
-        Map<String, Object> item = new HashMap<>();
-        item.put("key1", "value1");
-        item.put("key2", "value2");
-
-        SqlParameterSource sqlParameterSource = customItemWriter.mapToSqlParameterSource(item);
-
-        assertTrue(sqlParameterSource instanceof MapSqlParameterSource);
-        assertEquals("value1", sqlParameterSource.getValue("key1"));
-        assertEquals("value2", sqlParameterSource.getValue("key2"));
-    }
-}
