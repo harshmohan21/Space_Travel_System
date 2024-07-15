@@ -1,162 +1,102 @@
-To implement a custom `ItemWriter` that throws a custom exception for problematic records and integrates with your existing `JdbcBatchItemWriter`, you can follow these steps:
-
-1. **Create a Custom Exception**: Define a custom exception that carries the problematic record.
-2. **Implement the Custom `ItemWriter`**: Modify your `ItemWriter` to throw the custom exception when an error occurs.
-
-### Step-by-Step Implementation
-
-#### 1. Create a Custom Exception
-
-```java
-public class ItemWriteException extends Exception {
-    private final Map<String, Object> problematicRecord;
-
-    public ItemWriteException(String message, Map<String, Object> problematicRecord) {
-        super(message);
-        this.problematicRecord = problematicRecord;
-    }
-
-    public Map<String, Object> getProblematicRecord() {
-        return problematicRecord;
-    }
-}
-```
-
-#### 2. Implement the Custom `ItemWriter`
-
-Update your `ItemWriter` implementation to throw `ItemWriteException` for problematic records and use `JdbcBatchItemWriter`.
-
-```java
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnitRunner;
+import org.springframework.batch.item.Chunk;
 import org.springframework.batch.item.ItemWriter;
-import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
-import org.springframework.batch.item.database.JdbcBatchItemWriter;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.StepScope;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 
 import javax.sql.DataSource;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
-@Configuration
-public class BatchConfig {
+import static org.mockito.Mockito.*;
 
-    @Bean
-    @StepScope
-    public ItemWriter<Map<String, Object>> itemWriter(DataSource dataSource, JdbcTemplate jdbcTemplate, @Value("#{jobParameters['dest_table']}") String destTable) {
-        System.out.println("inside itemWriter: " + destTable);
-        ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
-        return items -> {
-            if (items.isEmpty()) {
-                return; // No items to write
-            }
-            // Convert the chunk to a list to access the first item
-            Map<String, Object> sampleItem = items.iterator().next();
-            String sql = buildDynamicSql(sampleItem, destTable);
-            JdbcBatchItemWriter<Map<String, Object>> writer = new JdbcBatchItemWriterBuilder<Map<String, Object>>()
-                    .itemSqlParameterSourceProvider(this::mapToSqlParameterSource)
-                    .sql(sql)
-                    .dataSource(dataSource)
-                    .build();
-            // Open the writer (necessary because we are manually constructing it)
-            writer.afterPropertiesSet();
-            // Write the items
-            try {
-                writer.write(items);
-            } catch (Exception ex) {
-                for (Map<String, Object> item : items) {
-                    try {
-                        writer.write(List.of(item)); // Attempt to write each item individually
-                    } catch (Exception e) {
-                        throw new ItemWriteException("Error writing item", item);
-                    }
-                }
-            }
-        };
+@RunWith(MockitoJUnitRunner.class)
+public class CustomItemWriterTest {
+
+    @Mock
+    private DataSource dataSource;
+
+    @Mock
+    private JdbcTemplate jdbcTemplate;
+
+    @Mock
+    private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
+
+    @InjectMocks
+    private CustomItemWriter customItemWriter;
+
+    private String destTable = "test_table";
+    private String appendData = "n";
+
+    @Before
+    public void setUp() {
+        MockitoAnnotations.initMocks(this);
+        customItemWriter = new CustomItemWriter(dataSource, jdbcTemplate, destTable, appendData);
     }
 
-    private MapSqlParameterSource mapToSqlParameterSource(Map<String, Object> item) {
-        return new MapSqlParameterSource(item);
+    @Test
+    public void testEnsureTableExistsAndIsEmpty_TableExists() {
+        doNothing().when(jdbcTemplate).execute(anyString());
+        customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 1");
+        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
     }
 
-    private String buildDynamicSql(Map<String, Object> sampleItem, String destTable) {
-        // Implement your logic to build dynamic SQL based on the sample item and destination table
-        return "INSERT INTO " + destTable + " (...) VALUES (...)"; // Replace with actual SQL construction logic
+    @Test(expected = RuntimeException.class)
+    public void testEnsureTableExistsAndIsEmpty_TableDoesNotExist() {
+        doThrow(new RuntimeException()).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 1");
+        customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
     }
 
-    private void ensureTableExistsAndIsEmpty(JdbcTemplate jdbcTemplate, String destTable) {
-        // Implement your logic to ensure the destination table exists and is empty
-    }
-}
-```
-
-### Explanation
-
-1. **Custom Exception**: The `ItemWriteException` class carries the problematic record.
-
-2. **Custom ItemWriter Implementation**:
-   - **ItemWriter**: The `ItemWriter` implementation uses `JdbcBatchItemWriter` to write items to the database.
-   - **Error Handling**: In case of an error, the writer attempts to write each item individually to identify the problematic record and throws a custom `ItemWriteException`.
-
-3. **Helper Methods**:
-   - **mapToSqlParameterSource**: Converts a map to `MapSqlParameterSource` for SQL parameter substitution.
-   - **buildDynamicSql**: Constructs the dynamic SQL based on the sample item and destination table.
-   - **ensureTableExistsAndIsEmpty**: Ensures that the destination table exists and is empty.
-
-### Register the Custom ItemWriter
-
-Make sure to register this custom `ItemWriter` in your step configuration.
-
-```java
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
-import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
-import org.springframework.batch.core.launch.support.RunIdIncrementer;
-import org.springframework.batch.core.Job;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-
-@Configuration
-@EnableBatchProcessing
-public class BatchJobConfig {
-
-    @Bean
-    public Job importUserJob(JobBuilderFactory jobBuilderFactory, Step step1) {
-        return jobBuilderFactory.get("importUserJob")
-                .incrementer(new RunIdIncrementer())
-                .flow(step1)
-                .end()
-                .build();
+    @Test
+    public void testWrite_NoItems() throws Exception {
+        Chunk<Map<String, Object>> items = new Chunk<>(Collections.emptyList());
+        customItemWriter.write(items);
+        verifyNoInteractions(namedParameterJdbcTemplate);
     }
 
-    @Bean
-    public Step step1(StepBuilderFactory stepBuilderFactory,
-                      ItemReader<Map<String, Object>> reader,
-                      ItemProcessor<Map<String, Object>, Map<String, Object>> processor,
-                      ItemWriter<Map<String, Object>> writer,
-                      CustomItemWriteListener writeListener) {
+    @Test
+    public void testWrite_ItemsPresent() throws Exception {
+        Map<String, Object> item1 = new HashMap<>();
+        item1.put("key1", "value1");
+        Map<String, Object> item2 = new HashMap<>();
+        item2.put("key2", "value2");
+        List<Map<String, Object>> itemList = Arrays.asList(item1, item2);
+        Chunk<Map<String, Object>> items = new Chunk<>(itemList);
 
-        return stepBuilderFactory.get("step1")
-                .<Map<String, Object>, Map<String, Object>>chunk(10)
-                .reader(reader)
-                .processor(processor)
-                .writer(writer)
-                .listener(writeListener)
-                .faultTolerant()
-                .retryLimit(3)
-                .retry(Exception.class)
-                .skipLimit(10)
-                .skip(Exception.class)
-                .build();
+        customItemWriter.write(items);
+
+        verify(namedParameterJdbcTemplate, times(1)).update(anyString(), any(SqlParameterSource.class));
+    }
+
+    @Test
+    public void testBuildDynamicSql() {
+        Map<String, Object> sampleItem = new HashMap<>();
+        sampleItem.put("key1", "value1");
+        sampleItem.put("key2", "value2");
+
+        String sql = customItemWriter.buildDynamicSql(sampleItem, destTable);
+        String expectedSql = "INSERT INTO " + destTable + " (key1, key2) VALUES (:key1, :key2)";
+        assertEquals(expectedSql, sql);
+    }
+
+    @Test
+    public void testMapToSqlParameterSource() {
+        Map<String, Object> item = new HashMap<>();
+        item.put("key1", "value1");
+        item.put("key2", "value2");
+
+        SqlParameterSource sqlParameterSource = customItemWriter.mapToSqlParameterSource(item);
+
+        assertTrue(sqlParameterSource instanceof MapSqlParameterSource);
+        assertEquals("value1", sqlParameterSource.getValue("key1"));
+        assertEquals("value2", sqlParameterSource.getValue("key2"));
     }
 }
-```
-
-By following these steps, you will have a custom `ItemWriter` that integrates with `JdbcBatchItemWriter`, throws custom exceptions for problematic records, and works with the custom listener to print the specific record causing the failure.
