@@ -1,152 +1,80 @@
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.*;
-import org.mockito.junit.jupiter.MockitoExtension;
+To ensure that the SQL statement being executed by `JdbcTemplate.execute(sql)` is only of type `INSERT`, you can add a check in your code before executing the statement. This can be done by validating the SQL string to confirm that it starts with the `INSERT` keyword.
+
+Here’s an example of how you can implement this check in your Spring application:
+
+```java
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
-import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import org.springframework.stereotype.Component;
 
-import javax.sql.DataSource;
-import java.util.*;
+@Component
+public class SqlExecutor {
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+    private final JdbcTemplate jdbcTemplate;
 
-@ExtendWith(MockitoExtension.class)
-class CustomItemWriterTest {
-
-    @Mock
-    private DataSource dataSource;
-
-    @Mock
-    private JdbcTemplate jdbcTemplate;
-
-    private CustomItemWriter customItemWriter;
-
-    private final String destTable = "test_table";
-    private final String appendData = "n";
-
-    @BeforeEach
-    void setUp() {
-        customItemWriter = new CustomItemWriter(dataSource, jdbcTemplate, destTable, appendData);
-    }
-@Test
-    void testEnsureTableExists_TableExists() {
-        // Mock the JdbcTemplate to do nothing when execute is called with the expected SQL
-        doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
-
-        // Call the method and assert that no exception is thrown
-        assertDoesNotThrow(() -> customItemWriter.ensureTableExists(jdbcTemplate, destTable));
-
-        // Verify that execute was called once with the expected SQL
-        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
+    public SqlExecutor(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
     }
 
-    @Test
-    void testEnsureTableExists_TableDoesNotExist() {
-        // Mock the JdbcTemplate to throw an exception when execute is called with the expected SQL
-        doThrow(new RuntimeException("Table does not exist")).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
-
-        // Call the method and assert that a RuntimeException is thrown with the expected message
-        Exception exception = assertThrows(RuntimeException.class, () -> {
-            customItemWriter.ensureTableExists(jdbcTemplate, destTable);
-        });
-
-        // Verify that the exception message contains the expected text
-        assertTrue(exception.getMessage().contains("Table " + destTable + " does not exist"));
-
-        // Verify that execute was called once with the expected SQL
-        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
-    }
-    @Test
-    void testEnsureTableExistsAndIsEmpty_TableExistsAndIsEmptied() {
-        doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
-        doNothing().when(jdbcTemplate).execute("TRUNCATE TABLE " + destTable);
-
-        assertDoesNotThrow(() -> customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable));
-
-        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
-        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
-    }
-@Test
-    void testEnsureTableIsEmpty_Success() {
-        // Mock the JdbcTemplate to do nothing when execute is called with the expected SQL
-        doNothing().when(jdbcTemplate).execute("TRUNCATE TABLE " + destTable);
-
-        // Call the method and assert that no exception is thrown
-        assertDoesNotThrow(() -> customItemWriter.ensureTableIsEmpty(jdbcTemplate, destTable));
-
-        // Verify that execute was called once with the expected SQL
-        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
-    }
-
-    @Test
-    void testEnsureTableIsEmpty_Failure() {
-        // Mock the JdbcTemplate to throw an exception when execute is called with the expected SQL
-        doThrow(new RuntimeException("Failed to empty table")).when(jdbcTemplate).execute("TRUNCATE TABLE " + destTable);
-
-        // Call the method and assert that a RuntimeException is thrown with the expected message
-        Exception exception = assertThrows(RuntimeException.class, () -> {
-            customItemWriter.ensureTableIsEmpty(jdbcTemplate, destTable);
-        });
-
-        // Verify that the exception message contains the expected text
-        assertTrue(exception.getMessage().contains("Failed to empty table " + destTable));
-
-        // Verify that execute was called once with the expected SQL
-        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
-    }
-
-    @Test
-    void testWrite_ItemsWrittenSuccessfully() throws Exception {
-        Map<String, Object> item1 = new HashMap<>();
-        item1.put("column1", "value1");
-        item1.put("column2", "value2");
-
-        List<Map<String, Object>> items = Collections.singletonList(item1);
-
-        SimpleJdbcInsert writer = mock(SimpleJdbcInsert.class);
-        when(writer.executeBatch(any(SqlParameterSource[].class))).thenReturn(new int[]{1});
-
-        ReflectionTestUtils.setField(customItemWriter, "writer", writer);
-
-        customItemWriter.write(items);
-
-        verify(writer, times(1)).executeBatch(any(SqlParameterSource[].class));
-    }
-
-    @Test
-    void testWrite_NoItemsToWrite() throws Exception {
-        List<Map<String, Object>> items = Collections.emptyList();
-
-        customItemWriter.write(items);
-
-        verifyNoInteractions(dataSource);
-    }
-
-    @Test
-    void testBuildDynamicSql() {
-        Map<String, Object> sampleItem = new HashMap<>();
-        sampleItem.put("column1", "value1");
-        sampleItem.put("column2", "value2");
-
-        String sql = customItemWriter.buildDynamicSql(sampleItem, destTable);
-
-        assertEquals("INSERT INTO " + destTable + " (column1, column2) VALUES (:column1, :column2)", sql);
-    }
-
-    @Test
-    void testMapToSqlParameterSource() {
-        Map<String, Object> item = new HashMap<>();
-        item.put("column1", "value1");
-        item.put("column2", "value2");
-
-        SqlParameterSource parameterSource = customItemWriter.mapToSqlParameterSource(item);
-
-        assertTrue(parameterSource instanceof MapSqlParameterSource);
-        assertEquals("value1", ((MapSqlParameterSource) parameterSource).getValue("column1"));
-        assertEquals("value2", ((MapSqlParameterSource) parameterSource).getValue("column2"));
+    public void executeInsert(String sql) {
+        // Trim leading/trailing whitespace and convert to uppercase for case-insensitive comparison
+        String trimmedSql = sql.trim().toUpperCase();
+        
+        // Check if the SQL statement is an INSERT statement
+        if (trimmedSql.startsWith("INSERT")) {
+            jdbcTemplate.execute(sql);
+            System.out.println("Executed SQL: " + sql);
+        } else {
+            throw new IllegalArgumentException("Only INSERT statements are allowed. Provided SQL: " + sql);
+        }
     }
 }
+```
+
+### Usage Example
+
+Here’s how you can use the `SqlExecutor` in your Spring application:
+
+```java
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+
+public class MainApplication {
+    public static void main(String[] args) {
+        // Ensure that you have a configured ApplicationContext and JdbcTemplate bean
+        ApplicationContext context = new AnnotationConfigApplicationContext(AppConfig.class);
+        JdbcTemplate jdbcTemplate = context.getBean(JdbcTemplate.class);
+
+        SqlExecutor sqlExecutor = new SqlExecutor(jdbcTemplate);
+
+        // Example SQL statements
+        String insertSql = "INSERT INTO my_table (column1, column2) VALUES ('value1', 'value2')";
+        String invalidSql = "UPDATE my_table SET column1 = 'value' WHERE column2 = 'value2'";
+
+        // Execute valid INSERT statement
+        sqlExecutor.executeInsert(insertSql);
+
+        // Attempt to execute invalid non-INSERT statement (will throw an exception)
+        try {
+            sqlExecutor.executeInsert(invalidSql);
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+        }
+    }
+}
+```
+
+### Explanation
+
+1. **SqlExecutor Class**:
+   - The `executeInsert` method first trims any leading or trailing whitespace from the SQL statement and converts it to uppercase to make the check case-insensitive.
+   - It then checks if the trimmed SQL statement starts with the `INSERT` keyword.
+   - If the statement is an `INSERT`, it executes the statement using `JdbcTemplate.execute(sql)`.
+   - If the statement is not an `INSERT`, it throws an `IllegalArgumentException`.
+
+2. **MainApplication Class**:
+   - Demonstrates how to use the `SqlExecutor` class.
+   - Includes example SQL statements and shows how to handle an invalid non-`INSERT` statement.
+
+### Notes:
+- This approach assumes that the SQL statements are simple and do not contain comments or complex structures that might require more sophisticated parsing.
+- For more complex SQL validation, consider using a SQL parser library, but this should suffice for basic `INSERT` statement validation.
