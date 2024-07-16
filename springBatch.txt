@@ -1,23 +1,25 @@
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.mockito.junit.MockitoJUnitRunner;
-import org.springframework.batch.item.Chunk;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import org.springframework.jdbc.core.namedparam.SqlParameterSourceProvider;
+import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import javax.sql.DataSource;
 import java.util.*;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-@RunWith(MockitoJUnitRunner.class)
-public class CustomItemWriterTest {
+@ExtendWith(MockitoExtension.class)
+class CustomItemWriterTest {
 
     @Mock
     private DataSource dataSource;
@@ -25,33 +27,98 @@ public class CustomItemWriterTest {
     @Mock
     private JdbcTemplate jdbcTemplate;
 
-    @Mock
-    private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
-
+    @InjectMocks
     private CustomItemWriter customItemWriter;
 
-    private String destTable = "test_table";
-    private String appendData = "n";
+    private final String destTable = "test_table";
+    private final String appendData = "n";
 
-    @Before
-    public void setUp() {
-        MockitoAnnotations.initMocks(this);
+    @BeforeEach
+    void setUp() {
         customItemWriter = new CustomItemWriter(dataSource, jdbcTemplate, destTable, appendData);
     }
 
     @Test
-    public void testEnsureTableExistsAndIsEmpty_TableExists() {
+    void testEnsureTableExistsAndIsEmpty_TableExistsAndIsEmptied() {
         doNothing().when(jdbcTemplate).execute(anyString());
-        customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+
+        assertDoesNotThrow(() -> customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable));
+
         verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 1");
         verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
     }
 
-    @Test(expected = RuntimeException.class)
-    public void testEnsureTableExistsAndIsEmpty_TableDoesNotExist() {
-        doThrow(new RuntimeException()).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 1");
-        customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+    @Test
+    void testEnsureTableExistsAndIsEmpty_TableDoesNotExist() {
+        doThrow(new RuntimeException("Table does not exist")).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 1");
+
+        Exception exception = assertThrows(RuntimeException.class, () -> {
+            customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+        });
+
+        assertTrue(exception.getMessage().contains("Table " + destTable + " does not exist"));
     }
 
     @Test
-    public void testWrite_NoItems() throws Exception {
+    void testEnsureTableExistsAndIsEmpty_TableNotEmptied() {
+        doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 1");
+        doThrow(new RuntimeException("Failed to empty table")).when(jdbcTemplate).execute("TRUNCATE TABLE " + destTable);
+
+        Exception exception = assertThrows(RuntimeException.class, () -> {
+            customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+        });
+
+        assertTrue(exception.getMessage().contains("Failed to empty table " + destTable));
+    }
+
+    @Test
+    void testWrite_ItemsWrittenSuccessfully() throws Exception {
+        Map<String, Object> item1 = new HashMap<>();
+        item1.put("column1", "value1");
+        item1.put("column2", "value2");
+
+        List<Map<String, Object>> items = Collections.singletonList(item1);
+
+        SimpleJdbcInsert writer = mock(SimpleJdbcInsert.class);
+        when(writer.executeBatch(any(SqlParameterSource[].class))).thenReturn(new int[]{1});
+
+        ReflectionTestUtils.setField(customItemWriter, "writer", writer);
+
+        customItemWriter.write(items);
+
+        verify(writer, times(1)).executeBatch(any(SqlParameterSource[].class));
+    }
+
+    @Test
+    void testWrite_NoItemsToWrite() throws Exception {
+        List<Map<String, Object>> items = Collections.emptyList();
+
+        customItemWriter.write(items);
+
+        verifyNoInteractions(dataSource);
+    }
+
+    @Test
+    void testBuildDynamicSql() {
+        Map<String, Object> sampleItem = new HashMap<>();
+        sampleItem.put("column1", "value1");
+        sampleItem.put("column2", "value2");
+
+        String sql = customItemWriter.buildDynamicSql(sampleItem, destTable);
+
+        assertEquals("INSERT INTO " + destTable + " (column1, column2) VALUES (:column1, :column2)", sql);
+    }
+
+    @Test
+    void testMapToSqlParameterSource() {
+        Map<String, Object> item = new HashMap<>();
+        item.put("column1", "value1");
+        item.put("column2", "value2");
+
+        SqlParameterSource parameterSource = customItemWriter.mapToSqlParameterSource(item);
+
+        assertTrue(parameterSource instanceof MapSqlParameterSource);
+        assertEquals("value1", ((MapSqlParameterSource) parameterSource).getValue("column1"));
+        assertEquals("value2", ((MapSqlParameterSource) parameterSource).getValue("column2"));
+    }
+}
