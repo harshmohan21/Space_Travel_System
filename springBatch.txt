@@ -70,27 +70,33 @@ class CustomItemWriterTest {
         verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
         verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
     }
-    @Test
-    void testEnsureTableExistsAndIsEmpty_TableDoesNotExist() {
-        doThrow(new RuntimeException("Table does not exist")).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 1");
+@Test
+    void testEnsureTableIsEmpty_Success() {
+        // Mock the JdbcTemplate to do nothing when execute is called with the expected SQL
+        doNothing().when(jdbcTemplate).execute("TRUNCATE TABLE " + destTable);
 
-        Exception exception = assertThrows(RuntimeException.class, () -> {
-            customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
-        });
+        // Call the method and assert that no exception is thrown
+        assertDoesNotThrow(() -> customItemWriter.ensureTableIsEmpty(jdbcTemplate, destTable));
 
-        assertTrue(exception.getMessage().contains("Table " + destTable + " does not exist"));
+        // Verify that execute was called once with the expected SQL
+        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
     }
 
     @Test
-    void testEnsureTableExistsAndIsEmpty_TableNotEmptied() {
-        doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 1");
+    void testEnsureTableIsEmpty_Failure() {
+        // Mock the JdbcTemplate to throw an exception when execute is called with the expected SQL
         doThrow(new RuntimeException("Failed to empty table")).when(jdbcTemplate).execute("TRUNCATE TABLE " + destTable);
 
+        // Call the method and assert that a RuntimeException is thrown with the expected message
         Exception exception = assertThrows(RuntimeException.class, () -> {
-            customItemWriter.ensureTableExistsAndIsEmpty(jdbcTemplate, destTable);
+            customItemWriter.ensureTableIsEmpty(jdbcTemplate, destTable);
         });
 
+        // Verify that the exception message contains the expected text
         assertTrue(exception.getMessage().contains("Failed to empty table " + destTable));
+
+        // Verify that execute was called once with the expected SQL
+        verify(jdbcTemplate, times(1)).execute("TRUNCATE TABLE " + destTable);
     }
 
     @Test
