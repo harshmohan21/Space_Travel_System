@@ -32,7 +32,34 @@ class CustomItemWriterTest {
     void setUp() {
         customItemWriter = new CustomItemWriter(dataSource, jdbcTemplate, destTable, appendData);
     }
+@Test
+    void testEnsureTableExists_TableExists() {
+        // Mock the JdbcTemplate to do nothing when execute is called with the expected SQL
+        doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
 
+        // Call the method and assert that no exception is thrown
+        assertDoesNotThrow(() -> customItemWriter.ensureTableExists(jdbcTemplate, destTable));
+
+        // Verify that execute was called once with the expected SQL
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
+    }
+
+    @Test
+    void testEnsureTableExists_TableDoesNotExist() {
+        // Mock the JdbcTemplate to throw an exception when execute is called with the expected SQL
+        doThrow(new RuntimeException("Table does not exist")).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
+
+        // Call the method and assert that a RuntimeException is thrown with the expected message
+        Exception exception = assertThrows(RuntimeException.class, () -> {
+            customItemWriter.ensureTableExists(jdbcTemplate, destTable);
+        });
+
+        // Verify that the exception message contains the expected text
+        assertTrue(exception.getMessage().contains("Table " + destTable + " does not exist"));
+
+        // Verify that execute was called once with the expected SQL
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
+    }
     @Test
     void testEnsureTableExistsAndIsEmpty_TableExistsAndIsEmptied() {
         doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
