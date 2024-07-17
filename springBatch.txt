@@ -92,4 +92,15 @@ class JobCompletionNotificationImplTest {
         // Assert
         verify(logger, never()).info("Job Completed");
     }
+    @Test
+    void testDefaultConstructor() {
+        // Act
+        JobCompletionNotificationImpl defaultInstance = new JobCompletionNotificationImpl();
+
+        // Assert
+        // We can't directly verify the logger inside, but we can ensure no exceptions
+        // and that the beforeJob and afterJob methods work as intended
+        defaultInstance.beforeJob(jobExecution);
+        defaultInstance.afterJob(jobExecution);
+    }
 }
