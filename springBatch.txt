@@ -42,7 +42,6 @@ class FileConfigTableTest {
         // Arrange
         String tableName = "test_table";
         doThrow(new RuntimeException()).when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
-        doNothing().when(jdbcTemplate).execute(anyString());
 
         // Act
         fileConfigTable.configTable(tableName);
@@ -51,6 +50,7 @@ class FileConfigTableTest {
         verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
         verify(jdbcTemplate, times(1)).execute(startsWith("CREATE TABLE " + tableName));
     }
+
 
     @Test
     void testCreateTable() {
