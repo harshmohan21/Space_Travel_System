@@ -72,15 +72,15 @@ class InsertUpdateDeleteRecordTest {
     }
 
 
-@Test
+    @Test
     void testExecute_InsertQuery() throws Exception {
         // Arrange
         String sql = "INSERT INTO test_table (name) VALUES ('test')";
         KeyHolder keyHolder = new GeneratedKeyHolder();
 
         doAnswer(invocation -> {
-            PreparedStatement ps = mock(PreparedStatement.class);
             Connection connection = mock(Connection.class);
+            PreparedStatement ps = mock(PreparedStatement.class);
             ResultSet rs = mock(ResultSet.class);
 
             when(connection.prepareStatement(anyString(), any(String[].class))).thenReturn(ps);
@@ -92,15 +92,14 @@ class InsertUpdateDeleteRecordTest {
             psc.createPreparedStatement(connection);
             keyHolder.getKeyList().add(Map.of("CONFIG_ID", 1));
             return null;
-        }).when(jdbcTemplate).update(any(), any(KeyHolder.class));
+        }).when(jdbcTemplate).update(any(PreparedStatementCreator.class), any(KeyHolder.class));
 
         // Act
         insertUpdateDeleteRecord.execute(sql);
 
         // Assert
-        verify(jdbcTemplate, times(1)).update(any(), any(KeyHolder.class));
+        verify(jdbcTemplate, times(1)).update(any(PreparedStatementCreator.class), any(KeyHolder.class));
     }
-
     @Test
     void testExecute_UpdateQuery() {
         // Arrange
