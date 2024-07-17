@@ -1,138 +1,105 @@
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-import java.sql.PreparedStatement;
-
-public class InsertUpdateDeleteRecord {
-    private final JdbcTemplate jdbcTemplate;
-
-    public InsertUpdateDeleteRecord(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
-
-    public void execute(String sql) {
-        String trimmedSql = sql.trim().toUpperCase();
-        if (trimmedSql.startsWith("INSERT")) {
-            KeyHolder keyHolder = new GeneratedKeyHolder();
-            jdbcTemplate.update(connection -> {
-                PreparedStatement ps = connection.prepareStatement(sql, new String[]{"CONFIG_ID"});
-                return ps;
-            }, keyHolder);
-            Number generatedId = keyHolder.getKey();
-            System.out.println("Executed SQL insert query successfully:");
-            System.out.println("Generated config_id for the inserted record is: " + generatedId);
-        } else if (trimmedSql.startsWith("UPDATE")) {
-            System.out.println("Update started");
-            int rowsAffected = jdbcTemplate.update(sql);
-            System.out.println("Number of rows affected: " + rowsAffected);
-            System.out.println("Executed SQL UPDATE query successfully:");
-        } else if (trimmedSql.startsWith("DELETE")) {
-            System.out.println("DELETE started");
-            int rowsAffected = jdbcTemplate.update(sql);
-            System.out.println("Number of rows affected: " + rowsAffected);
-            System.out.println("Executed SQL DELETE query successfully:");
-        } else {
-            throw new IllegalArgumentException("Only INSERT, UPDATE, and DELETE are supported. Provided sql: " + sql);
-        }
-    }
-}
-
-
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.MockitoAnnotations;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
-class InsertUpdateDeleteRecordTest {
+class JobParamTest {
 
     @Mock
     private JdbcTemplate jdbcTemplate;
 
+    @Mock
+    private ConfigAccess configAccess;
+
     @InjectMocks
-    private InsertUpdateDeleteRecord insertUpdateDeleteRecord;
+    private JobParam jobParam;
 
     @BeforeEach
     void setUp() {
-        insertUpdateDeleteRecord = new InsertUpdateDeleteRecord(jdbcTemplate);
+        MockitoAnnotations.openMocks(this);
     }
 
-
     @Test
-    void testExecute_InsertQuery() throws Exception {
+    void testSetJobParam_Success() throws Exception {
         // Arrange
-        String sql = "INSERT INTO test_table (name) VALUES ('test')";
-        KeyHolder keyHolder = new GeneratedKeyHolder();
+        String tableName = "file_config_table";
+        String configId = "123";
+        Map<String, Object> config = new HashMap<>();
+        config.put("FILEPATH", "/path/to/file");
+        config.put("DELIMITER", ",");
+        config.put("DEST_TABLE", "destination_table");
+        config.put("lines_to_skip", 0);
+        config.put("SKIP_EXCEPTION", "Y");
+        config.put("APPEND_DATA", "N");
+        config.put("FILE_COLUMNS", new java.sql.Array() { /* Mock data */ });
+        config.put("REQUIRED_COLUMNS", new java.sql.Array() { /* Mock data */ });
+        config.put("DB_COLUMNS", new java.sql.Array() { /* Mock data */ });
+        config.put("DATATYPES", new java.sql.Array() { /* Mock data */ });
 
-        doAnswer(invocation -> {
-            Connection connection = mock(Connection.class);
-            PreparedStatement ps = mock(PreparedStatement.class);
-            ResultSet rs = mock(ResultSet.class);
-
-            when(connection.prepareStatement(anyString(), any(String[].class))).thenReturn(ps);
-            when(ps.getGeneratedKeys()).thenReturn(rs);
-            when(rs.next()).thenReturn(true);
-            when(rs.getObject(1)).thenReturn(1L);
-
-            PreparedStatementCreator psc = invocation.getArgument(0);
-            psc.createPreparedStatement(connection);
-            keyHolder.getKeyList().add(Map.of("CONFIG_ID", 1));
-            return null;
-        }).when(jdbcTemplate).update(any(PreparedStatementCreator.class), any(KeyHolder.class));
+        // Mocking behavior
+        when(configAccess.dao(tableName, configId)).thenReturn(config);
+        when(jdbcTemplate.execute(anyString())).thenReturn(null);
+        when(Files.lines(any(Path.class))).thenReturn(Files.lines(Path.of("/path/to/file"))); // Mock line count
 
         // Act
-        insertUpdateDeleteRecord.execute(sql);
+        JobParameters jobParameters = jobParam.setJobParam(tableName, configId);
 
         // Assert
-        verify(jdbcTemplate, times(1)).update(any(PreparedStatementCreator.class), any(KeyHolder.class));
-    }
-    @Test
-    void testExecute_UpdateQuery() {
-        // Arrange
-        String sql = "UPDATE test_table SET name = 'new_name' WHERE id = 1";
-        when(jdbcTemplate.update(sql)).thenReturn(1);
-
-        // Act
-        insertUpdateDeleteRecord.execute(sql);
-
-        // Assert
-        verify(jdbcTemplate, times(1)).update(sql);
+        assertNotNull(jobParameters);
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM destination_table WHERE 1 = 0");
     }
 
     @Test
-    void testExecute_DeleteQuery() {
+    void testSetJobParam_TableDoesNotExist() {
         // Arrange
-        String sql = "DELETE FROM test_table WHERE id = 1";
-        when(jdbcTemplate.update(sql)).thenReturn(1);
+        String tableName = "non_existent_table";
+        String configId = "123";
 
-        // Act
-        insertUpdateDeleteRecord.execute(sql);
-
-        // Assert
-        verify(jdbcTemplate, times(1)).update(sql);
-    }
-
-    @Test
-    void testExecute_UnsupportedQuery() {
-        // Arrange
-        String sql = "SELECT * FROM test_table";
+        // Mocking behavior
+        doThrow(new SQLException()).when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
 
         // Act & Assert
-        assertThrows(IllegalArgumentException.class, () -> insertUpdateDeleteRecord.execute(sql));
+        Exception exception = assertThrows(Exception.class, () -> jobParam.setJobParam(tableName, configId));
+        assertEquals("File Configuration table doesn't exist", exception.getMessage());
     }
-}
 
+    @Test
+    void testSetJobParam_InvalidSkipAppend() {
+        // Arrange
+        String tableName = "file_config_table";
+        String configId = "123";
+        Map<String, Object> config = new HashMap<>();
+        config.put("FILEPATH", "/path/to/file");
+        config.put("DELIMITER", ",");
+        config.put("DEST_TABLE", "destination_table");
+        config.put("lines_to_skip", 0);
+        config.put("SKIP_EXCEPTION", "INVALID"); // Invalid value
+        config.put("APPEND_DATA", "N");
+
+        // Mocking behavior
+        when(configAccess.dao(tableName, configId)).thenReturn(config);
+        when(jdbcTemplate.execute(anyString())).thenReturn(null);
+
+        // Act & Assert
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> jobParam.setJobParam(tableName, configId));
+        assertEquals("Invalid skip value: INVALID", exception.getMessage());
+    }
+    
+    // Add more test cases for different scenarios as needed...
+}
