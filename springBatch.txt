@@ -3,60 +3,148 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.JobParametersBuilder;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.sql.Array;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class ConfigAccessTest {
+class JobParamTest {
 
     @Mock
     private JdbcTemplate jdbcTemplate;
 
+    @Mock
     private ConfigAccess configAccess;
+
+    private JobParam jobParam;
 
     @BeforeEach
     void setUp() {
-        configAccess = new ConfigAccess(jdbcTemplate);
+        jobParam = new JobParam(jdbcTemplate);
     }
 
     @Test
-    void testDao_ConfigFound() {
+    void testSetJobParam_TableExists_ConfigValid() throws Exception {
         // Arrange
         String tableName = "config_table";
         String configId = "123";
-        String sql = "SELECT * FROM " + tableName + " WHERE CONFIG_ID = ?";
-        Map<String, Object> expectedConfig = new HashMap<>();
-        expectedConfig.put("key", "value");
+        String destTable = "dest_table";
+        String filePath = "path/to/file";
+        String delimiter = ",";
+        String skipException = "Y";
+        String appendData = "N";
+        Object[] fileColumnsArray = {"col1", "col2"};
+        Object[] requiredColumnsArray = {"reqCol1", "reqCol2"};
+        Object[] dbColumnsArray = {"dbCol1", "dbCol2"};
+        Object[] dataTypesArray = {"String", "Integer"};
 
-        when(jdbcTemplate.queryForList(sql, configId)).thenReturn(Collections.singletonList(expectedConfig));
+        Map<String, Object> config = new HashMap<>();
+        config.put("FILEPATH", filePath);
+        config.put("DELIMITER", delimiter);
+        config.put("DEST_TABLE", destTable);
+        config.put("SKIP_EXCEPTION", skipException);
+        config.put("APPEND_DATA", appendData);
+        config.put("FILE_COLUMNS", mock(Array.class));
+        config.put("REQUIRED_COLUMNS", mock(Array.class));
+        config.put("DB_COLUMNS", mock(Array.class));
+        config.put("DATATYPES", mock(Array.class));
+
+        when(jdbcTemplate.queryForList(anyString(), anyString())).thenReturn(Collections.singletonList(config));
+        when(((Array) config.get("FILE_COLUMNS")).getArray()).thenReturn(fileColumnsArray);
+        when(((Array) config.get("REQUIRED_COLUMNS")).getArray()).thenReturn(requiredColumnsArray);
+        when(((Array) config.get("DB_COLUMNS")).getArray()).thenReturn(dbColumnsArray);
+        when(((Array) config.get("DATATYPES")).getArray()).thenReturn(dataTypesArray);
+        when(Files.lines(Paths.get(filePath))).thenReturn(Collections.singletonList("line").stream());
 
         // Act
-        Map<String, Object> actualConfig = configAccess.dao(tableName, configId);
+        JobParameters jobParameters = jobParam.setJobParam(tableName, configId);
 
         // Assert
-        assertEquals(expectedConfig, actualConfig);
-        verify(jdbcTemplate, times(1)).queryForList(sql, configId);
+        assertNotNull(jobParameters);
+        assertEquals(filePath, jobParameters.getString("filePath"));
+        assertEquals(delimiter, jobParameters.getString("delimiter"));
+        assertEquals("col1,col2", jobParameters.getString("fileColumns"));
+        assertEquals("reqCol1,reqCol2", jobParameters.getString("requiredColumns"));
+        assertEquals("dbCol1,dbCol2", jobParameters.getString("dbColumns"));
+        assertEquals("String,Integer", jobParameters.getString("dataTypes"));
+        assertEquals(destTable, jobParameters.getString("destTable"));
+        assertEquals(appendData, jobParameters.getString("appendData"));
+        assertEquals(skipException, jobParameters.getString("skipException"));
+        assertNotNull(jobParameters.getLong("lineCount"));
+        assertNotNull(jobParameters.getLong("startAt"));
+
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
     }
 
     @Test
-    void testDao_ConfigNotFound() {
+    void testSetJobParam_TableDoesNotExist() throws Exception {
         // Arrange
         String tableName = "config_table";
         String configId = "123";
-        String sql = "SELECT * FROM " + tableName + " WHERE CONFIG_ID = ?";
 
-        when(jdbcTemplate.queryForList(sql, configId)).thenReturn(Collections.emptyList());
+        doThrow(new RuntimeException()).when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
 
         // Act & Assert
-        RuntimeException exception = assertThrows(RuntimeException.class, () -> {
-            configAccess.dao(tableName, configId);
-        });
+        Exception exception = assertThrows(Exception.class, () -> jobParam.setJobParam(tableName, configId));
+        assertEquals("File Configuration table doesn't exist", exception.getMessage());
 
-        assertEquals("No configuration found for configId: " + configId, exception.getMessage());
-        verify(jdbcTemplate, times(1)).queryForList(sql, configId);
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+    }
+
+    @Test
+    void testSetJobParam_DestTableDoesNotExist() throws Exception {
+        // Arrange
+        String tableName = "config_table";
+        String configId = "123";
+        String destTable = "dest_table";
+
+        Map<String, Object> config = new HashMap<>();
+        config.put("DEST_TABLE", destTable);
+
+        when(jdbcTemplate.queryForList(anyString(), anyString())).thenReturn(Collections.singletonList(config));
+        doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+        doThrow(new RuntimeException()).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
+
+        // Act & Assert
+        Exception exception = assertThrows(Exception.class, () -> jobParam.setJobParam(tableName, configId));
+        assertEquals("Destination table doesn't exist in database", exception.getMessage());
+
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
+    }
+
+    @Test
+    void testSetJobParam_InvalidSkipAppend() {
+        // Arrange
+        String skipException = "invalid";
+        String appendData = "Y";
+
+        // Act & Assert
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
+            JobParam.validateSkipAppend(skipException, appendData);
+        });
+        assertEquals("Invalid skip value: invalid", exception.getMessage());
+    }
+
+    @Test
+    void testSetJobParam_InvalidDataType() {
+        // Arrange
+        Object[] dataTypes = {"InvalidType"};
+
+        // Act & Assert
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
+            JobParam.validateDataTypes(dataTypes);
+        });
+        assertEquals("Invalid data type: InvalidType", exception.getMessage());
     }
 }
