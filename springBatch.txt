@@ -22,18 +22,19 @@ class FileConfigTableTest {
         fileConfigTable = new FileConfigTable(jdbcTemplate);
     }
 
-    @Test
+@Test
     void testConfigTable_TableExists() {
         // Arrange
         String tableName = "test_table";
-        doNothing().when(jdbcTemplate).execute(anyString());
+        doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
 
         // Act
         fileConfigTable.configTable(tableName);
 
         // Assert
         verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
-        verify(jdbcTemplate, never()).execute(anyString());
+        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+        verify(jdbcTemplate, never()).execute(startsWith("CREATE TABLE"));
     }
 
     @Test
