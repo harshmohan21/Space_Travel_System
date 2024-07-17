@@ -34,7 +34,7 @@ class JobParamTest {
         MockitoAnnotations.openMocks(this);
     }
 
-    @Test
+ @Test
     void testSetJobParam_Success() throws Exception {
         // Arrange
         String tableName = "file_config_table";
@@ -46,15 +46,26 @@ class JobParamTest {
         config.put("lines_to_skip", 0);
         config.put("SKIP_EXCEPTION", "Y");
         config.put("APPEND_DATA", "N");
-        config.put("FILE_COLUMNS", new java.sql.Array() { /* Mock data */ });
-        config.put("REQUIRED_COLUMNS", new java.sql.Array() { /* Mock data */ });
-        config.put("DB_COLUMNS", new java.sql.Array() { /* Mock data */ });
-        config.put("DATATYPES", new java.sql.Array() { /* Mock data */ });
 
-        // Mocking behavior
+        // Mocking Array
+        Array fileColumnsArray = mock(Array.class);
+        Array requiredColumnsArray = mock(Array.class);
+        Array dbColumnsArray = mock(Array.class);
+        Array dataTypesArray = mock(Array.class);
+        
+        when(fileColumnsArray.getArray()).thenReturn(new String[]{"col1", "col2"});
+        when(requiredColumnsArray.getArray()).thenReturn(new String[]{"col1"});
+        when(dbColumnsArray.getArray()).thenReturn(new String[]{"col1", "col2", "col3"});
+        when(dataTypesArray.getArray()).thenReturn(new String[]{"String", "Integer"});
+
+        // Configure mock behavior
+        config.put("FILE_COLUMNS", fileColumnsArray);
+        config.put("REQUIRED_COLUMNS", requiredColumnsArray);
+        config.put("DB_COLUMNS", dbColumnsArray);
+        config.put("DATATYPES", dataTypesArray);
+
         when(configAccess.dao(tableName, configId)).thenReturn(config);
         when(jdbcTemplate.execute(anyString())).thenReturn(null);
-        when(Files.lines(any(Path.class))).thenReturn(Files.lines(Path.of("/path/to/file"))); // Mock line count
 
         // Act
         JobParameters jobParameters = jobParam.setJobParam(tableName, configId);
@@ -64,7 +75,9 @@ class JobParamTest {
         verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
         verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM destination_table WHERE 1 = 0");
     }
-
+    
+    // Add additional test methods...
+}
     @Test
     void testSetJobParam_TableDoesNotExist() {
         // Arrange
