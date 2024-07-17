@@ -71,6 +71,7 @@ class InsertUpdateDeleteRecordTest {
         insertUpdateDeleteRecord = new InsertUpdateDeleteRecord(jdbcTemplate);
     }
 
+
     @Test
     void testExecute_InsertQuery() throws Exception {
         // Arrange
@@ -78,20 +79,16 @@ class InsertUpdateDeleteRecordTest {
         KeyHolder keyHolder = new GeneratedKeyHolder();
 
         doAnswer(invocation -> {
-            PreparedStatement ps = mock(PreparedStatement.class);
-            ResultSet rs = mock(ResultSet.class);
-            when(ps.getGeneratedKeys()).thenReturn(rs);
-            when(rs.next()).thenReturn(true);
-            when(rs.getObject(1)).thenReturn(1L);
-            ((KeyHolder) invocation.getArgument(1)).getKeyList().add(Map.of("CONFIG_ID", 1));
+            PreparedStatementCreator psc = invocation.getArgument(0);
+            keyHolder.getKeyList().add(Map.of("CONFIG_ID", 1));
             return null;
-        }).when(jdbcTemplate).update(any(), any(KeyHolder.class));
+        }).when(jdbcTemplate).update(any(PreparedStatementCreator.class), any(KeyHolder.class));
 
         // Act
         insertUpdateDeleteRecord.execute(sql);
 
         // Assert
-        verify(jdbcTemplate, times(1)).update(any(), any(KeyHolder.class));
+        verify(jdbcTemplate, times(1)).update(any(PreparedStatementCreator.class), any(KeyHolder.class));
     }
 
     @Test
