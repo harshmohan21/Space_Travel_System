@@ -1,91 +1,62 @@
-To execute an `INSERT` statement and return the generated keys (such as an auto-incremented primary key), you can use `JdbcTemplate.update` with a `KeyHolder` in Spring. This allows you to capture the generated key(s) from the inserted row.
-
-Here’s an updated version of the `SqlExecutor` class that handles `INSERT` statements and returns the generated keys:
-
-### SqlExecutor Class
-
-```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-import org.springframework.stereotype.Component;
-import java.sql.PreparedStatement;
-import java.sql.Statement;
-import java.util.Map;
 
-@Component
-public class SqlExecutor {
+import java.util.*;
 
-    private final JdbcTemplate jdbcTemplate;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-    public SqlExecutor(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+@ExtendWith(MockitoExtension.class)
+class ConfigAccessTest {
+
+    @Mock
+    private JdbcTemplate jdbcTemplate;
+
+    private ConfigAccess configAccess;
+
+    @BeforeEach
+    void setUp() {
+        configAccess = new ConfigAccess(jdbcTemplate);
     }
 
-    public Map<String, Object> executeInsert(String sql) {
-        // Trim leading/trailing whitespace and convert to uppercase for case-insensitive comparison
-        String trimmedSql = sql.trim().toUpperCase();
+    @Test
+    void testDao_ConfigFound() {
+        // Arrange
+        String tableName = "config_table";
+        String configId = "123";
+        String sql = "SELECT * FROM " + tableName + " WHERE CONFIG_ID = ?";
+        Map<String, Object> expectedConfig = new HashMap<>();
+        expectedConfig.put("key", "value");
 
-        // Check if the SQL statement is an INSERT statement
-        if (trimmedSql.startsWith("INSERT")) {
-            KeyHolder keyHolder = new GeneratedKeyHolder();
-            jdbcTemplate.update(connection -> {
-                PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
-                return ps;
-            }, keyHolder);
+        when(jdbcTemplate.queryForList(sql, configId)).thenReturn(Collections.singletonList(expectedConfig));
 
-            // Retrieve generated keys
-            Map<String, Object> keys = keyHolder.getKeys();
-            System.out.println("Executed SQL: " + sql);
-            System.out.println("Generated Keys: " + keys);
-            return keys;
-        } else {
-            throw new IllegalArgumentException("Only INSERT statements are allowed. Provided SQL: " + sql);
-        }
+        // Act
+        Map<String, Object> actualConfig = configAccess.dao(tableName, configId);
+
+        // Assert
+        assertEquals(expectedConfig, actualConfig);
+        verify(jdbcTemplate, times(1)).queryForList(sql, configId);
     }
-}
-```
 
-### Usage Example
+    @Test
+    void testDao_ConfigNotFound() {
+        // Arrange
+        String tableName = "config_table";
+        String configId = "123";
+        String sql = "SELECT * FROM " + tableName + " WHERE CONFIG_ID = ?";
 
-Here’s how you can use the `SqlExecutor` in your Spring application to execute an `INSERT` statement and get the generated keys:
+        when(jdbcTemplate.queryForList(sql, configId)).thenReturn(Collections.emptyList());
 
-```java
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import java.util.Map;
+        // Act & Assert
+        RuntimeException exception = assertThrows(RuntimeException.class, () -> {
+            configAccess.dao(tableName, configId);
+        });
 
-public class MainApplication {
-    public static void main(String[] args) {
-        // Ensure that you have a configured ApplicationContext and JdbcTemplate bean
-        ApplicationContext context = new AnnotationConfigApplicationContext(AppConfig.class);
-        JdbcTemplate jdbcTemplate = context.getBean(JdbcTemplate.class);
-
-        SqlExecutor sqlExecutor = new SqlExecutor(jdbcTemplate);
-
-        // Example INSERT SQL statement
-        String insertSql = "INSERT INTO my_table (column1, column2) VALUES ('value1', 'value2')";
-
-        // Execute INSERT statement and get generated keys
-        Map<String, Object> generatedKeys = sqlExecutor.executeInsert(insertSql);
-        System.out.println("Generated Keys: " + generatedKeys);
+        assertEquals("No configuration found for configId: " + configId, exception.getMessage());
+        verify(jdbcTemplate, times(1)).queryForList(sql, configId);
     }
 }
-```
-
-### Explanation
-
-1. **SqlExecutor Class**:
-   - The `executeInsert` method now uses `JdbcTemplate.update` with a `KeyHolder` to capture the generated keys from the `INSERT` statement.
-   - A `KeyHolder` is used to store the generated keys. The `GeneratedKeyHolder` class is a standard implementation of this interface.
-   - The `PreparedStatement` is configured to return generated keys using `Statement.RETURN_GENERATED_KEYS`.
-   - After executing the `INSERT` statement, the generated keys are retrieved from the `KeyHolder` and returned as a `Map<String, Object>`.
-
-2. **MainApplication Class**:
-   - Demonstrates how to use the updated `SqlExecutor` class to execute an `INSERT` statement and retrieve the generated keys.
-   - Prints the generated keys to the console.
-
-### Notes:
-- Ensure that your table's primary key column is configured to auto-generate values (e.g., using `AUTO_INCREMENT` in MySQL or `SERIAL` in PostgreSQL).
-- The `GeneratedKeyHolder` retrieves all generated keys, which can be useful if your table has multiple auto-generated columns.
-- Modify the `insertSql` string and table/column names to match your actual database schema.
