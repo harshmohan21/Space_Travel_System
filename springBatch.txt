@@ -1,222 +1,108 @@
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.HashMap;
-import java.util.Map;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.JobLauncher;
 import org.springframework.batch.core.JobParameters;
+import org.springframework.boot.SpringApplication;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import org.springframework.web.context.WebApplicationContext;
 
-class JobParamTest {
+@SpringJUnitConfig
+public class ControllerTest {
+
+    @Mock
+    private JobLauncher jobLauncher;
+
+    @Mock
+    private Job job;
 
     @Mock
     private JdbcTemplate jdbcTemplate;
 
+    @Mock
+    private WebApplicationContext webApplicationContext;
+
     @InjectMocks
-    private JobParam jobParam;
+    private Controller controller;
 
     @BeforeEach
-    void setUp() {
+    public void setUp() {
         MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    void testSetJobParamSuccess() throws Exception {
-        String tableName = "file_config";
-        String configId = "1";
-        String destTable = "dest_table";
-        String filePath = "src/test/resources/testfile.csv";
-        
-        Map<String, Object> config = new HashMap<>();
-        config.put("FILEPATH", filePath);
-        config.put("DELIMITER", ",");
-        config.put("DEST_TABLE", destTable);
-        config.put("lines_to_skip", 1);
-        config.put("SKIP_EXCEPTION", "Y");
-        config.put("APPEND_DATA", "N");
-        config.put("FILE_COLUMNS", new String[] {"col1", "col2"});
-        config.put("REQUIRED_COLUMNS", new String[] {"col1"});
-        config.put("DB_COLUMNS", new String[] {"db_col1", "db_col2"});
-        config.put("DATATYPES", new String[] {"String", "Integer"});
+    public void testHandle() throws Exception {
+        // Arrange
+        String tableName = "testTable";
+        String configId = "testConfigId";
+        ConfigAccess configAccess = mock(ConfigAccess.class);
+        JobParam jobParam = mock(JobParam.class);
+        JobParameters jobParameters = new JobParameters();
+        JobExecution jobExecution = mock(JobExecution.class);
 
-        when(configAccess.dao(tableName, configId)).thenReturn(config);
-        doNothing().when(jdbcTemplate).execute(anyString());
+        when(jdbcTemplate.queryForObject(any(String.class), any(Class.class))).thenReturn(configAccess);
+        when(jobParam.setJobParam(tableName, configId)).thenReturn(jobParameters);
+        when(jobLauncher.run(job, jobParameters)).thenReturn(jobExecution);
 
-        // Mock the static Paths.get method
-        Path mockPath = mock(Path.class);
-        PowerMockito.mockStatic(Paths.class);
-        PowerMockito.when(Paths.get(filePath)).thenReturn(mockPath);
+        // Act
+        controller.handle(tableName, configId);
 
-        // Mock the Files.lines method
-        PowerMockito.mockStatic(Files.class);
-        when(Files.lines(mockPath)).thenReturn(java.util.stream.Stream.of("line1", "line2"));
-
-        JobParameters jobParameters = jobParam.setJobParam(tableName, configId);
-        assertNotNull(jobParameters);
-        assertEquals(filePath, jobParameters.getString("filePath"));
+        // Assert
+        verify(jobLauncher, times(1)).run(job, jobParameters);
     }
 
     @Test
-    void testSetJobParamFileConfigTableNotExist() {
-        String tableName = "file_config";
-        String configId = "1";
+    public void testStop() throws Exception {
+        // Arrange
+        ConfigurableApplicationContext context = mock(ConfigurableApplicationContext.class);
+        when(webApplicationContext.getParent()).thenReturn(context);
 
-        doThrow(new RuntimeException("Table not found")).when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+        doNothing().when(context).close();
 
-        Exception exception = assertThrows(Exception.class, () -> {
-            jobParam.setJobParam(tableName, configId);
-        });
+        // Act
+        controller.stop();
 
-        assertEquals("File Configuration table doesn't exist", exception.getMessage());
-    }
-
-@Test
-    void testSetJobParamDestTableNotExist() {
-        String tableName = "file_config";
-        String configId = "1";
-        String destTable = "dest_table";
-        String filePath = "src/test/resources/testfile.csv";
-
-        // Mocking the configAccess to return a valid configuration
-        Map<String, Object> config = new HashMap<>();
-        config.put("FILEPATH", filePath);
-        config.put("DELIMITER", ",");
-        config.put("DEST_TABLE", destTable);
-        config.put("lines_to_skip", 1);
-        config.put("SKIP_EXCEPTION", "Y");
-        config.put("APPEND_DATA", "N");
-        config.put("FILE_COLUMNS", new String[] {"col1", "col2"});
-        config.put("REQUIRED_COLUMNS", new String[] {"col1"});
-        config.put("DB_COLUMNS", new String[] {"db_col1", "db_col2"});
-        config.put("DATATYPES", new String[] {"String", "Integer"});
-
-        when(configAccess.dao(tableName, configId)).thenReturn(config);
-
-        // Mocking JdbcTemplate to simulate table existence check
-        doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
-        doThrow(new RuntimeException("Table not found")).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
-
-        Exception exception = assertThrows(Exception.class, () -> {
-            jobParam.setJobParam(tableName, configId);
-        });
-
-        assertEquals("Destination table doesn't exist in database", exception.getMessage());
-    }
-
-
-    @Test
-    void testValidateSkipAppendInvalidSkip() {
-        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
-            JobParam.validateSkipAppend("invalid", "Y");
-        });
-
-        assertEquals("Invalid skip value: invalid", exception.getMessage());
+        // Assert
+        verify(webApplicationContext, times(1)).getParent();
+        verify(context, times(1)).close();
     }
 
     @Test
-    void testValidateSkipAppendInvalidAppend() {
-        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
-            JobParam.validateSkipAppend("Y", "invalid");
-        });
+    public void testCreateFileConfigTable() throws Exception {
+        // Arrange
+        String tableName = "testTable";
+        FileConfigTable fileConfigTable = mock(FileConfigTable.class);
 
-        assertEquals("Invalid append value: invalid", exception.getMessage());
+        // Act
+        controller.createFileConfigTable(tableName);
+
+        // Assert
+        verify(fileConfigTable, times(1)).configTable(tableName);
     }
 
     @Test
-    void testValidateDataTypesInvalidDataType() {
-        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
-            JobParam.validateDataTypes(new Object[] {"String", "InvalidType"});
-        });
+    public void testInsertConfig() throws Exception {
+        // Arrange
+        String sql = "INSERT INTO testTable (id, name) VALUES (1, 'testName')";
+        InsertUpdateDeleteRecord record = mock(InsertUpdateDeleteRecord.class);
 
-        assertEquals("Invalid data type: InvalidType", exception.getMessage());
+        // Act
+        controller.insertConfig(sql);
+
+        // Assert
+        verify(record, times(1)).execute(sql);
     }
 }
-
-
-
-
-
-
-
-
-<dependency>
-    <groupId>org.mockito</groupId>
-    <artifactId>mockito-core</artifactId>
-    <version>3.9.0</version>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.powermock</groupId>
-    <artifactId>powermock-module-junit4</artifactId>
-    <version>2.0.9</version>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.powermock</groupId>
-    <artifactId>powermock-api-mockito2</artifactId>
-    <version>2.0.9</version>
-    <scope>test</scope>
-</dependency>
-<dependency>
-    <groupId>org.powermock</groupId>
-    <artifactId>powermock-module-junit4-rule</artifactId>
-    <version>2.0.9</version>
-    <scope>test</scope>
-</dependency>
-
-@Test
-    void testSetJobParamSuccess() throws Exception {
-        String tableName = "file_config";
-        String configId = "1";
-        String destTable = "dest_table";
-        String filePath = "src/test/resources/testfile.csv";
-        
-        Map<String, Object> config = new HashMap<>();
-        config.put("FILEPATH", filePath);
-        config.put("DELIMITER", ",");
-        config.put("DEST_TABLE", destTable);
-        config.put("lines_to_skip", 1);
-        config.put("SKIP_EXCEPTION", "Y");
-        config.put("APPEND_DATA", "N");
-        config.put("FILE_COLUMNS", new String[] {"col1", "col2"});
-        config.put("REQUIRED_COLUMNS", new String[] {"col1"});
-        config.put("DB_COLUMNS", new String[] {"db_col1", "db_col2"});
-        config.put("DATATYPES", new String[] {"String", "Integer"});
-
-        when(configAccess.dao(tableName, configId)).thenReturn(config);
-        doNothing().when(jdbcTemplate).execute(anyString());
-
-        // Mock the static Paths.get method
-        Path mockPath = mock(Path.class);
-        PowerMockito.mockStatic(Paths.class);
-        PowerMockito.when(Paths.get(filePath)).thenReturn(mockPath);
-
-        // Mock the Files.lines method
-        PowerMockito.mockStatic(Files.class);
-        when(Files.lines(mockPath)).thenReturn(java.util.stream.Stream.of("line1", "line2"));
-
-        JobParameters jobParameters = jobParam.setJobParam(tableName, configId);
-        assertNotNull(jobParameters);
-        assertEquals(filePath, jobParameters.getString("filePath"));
-    }
-
-<build>
-    <plugins>
-        <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-surefire-plugin</artifactId>
-            <version>3.0.0-M5</version>
-            <configuration>
-                <argLine>--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED</argLine>
-            </configuration>
-        </plugin>
-    </plugins>
-</build>
