@@ -1,30 +1,24 @@
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.SQLException;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 class JobParamTest {
 
     @Mock
     private JdbcTemplate jdbcTemplate;
-
-    @Mock
-    private ConfigAccess configAccess;
 
     @InjectMocks
     private JobParam jobParam;
@@ -34,85 +28,94 @@ class JobParamTest {
         MockitoAnnotations.openMocks(this);
     }
 
- @Test
-    void testSetJobParam_Success() throws Exception {
-        // Arrange
-        String tableName = "file_config_table";
-        String configId = "123";
+    @Test
+    void testSetJobParamSuccess() throws Exception {
+        String tableName = "file_config";
+        String configId = "1";
+        String destTable = "dest_table";
+        String filePath = "src/test/resources/testfile.csv";
+        
+        ConfigAccess configAccess = mock(ConfigAccess.class);
         Map<String, Object> config = new HashMap<>();
-        config.put("FILEPATH", "/path/to/file");
+        config.put("FILEPATH", filePath);
         config.put("DELIMITER", ",");
-        config.put("DEST_TABLE", "destination_table");
-        config.put("lines_to_skip", 0);
+        config.put("DEST_TABLE", destTable);
+        config.put("lines_to_skip", 1);
         config.put("SKIP_EXCEPTION", "Y");
         config.put("APPEND_DATA", "N");
-
-        // Mocking Array
-        Array fileColumnsArray = mock(Array.class);
-        Array requiredColumnsArray = mock(Array.class);
-        Array dbColumnsArray = mock(Array.class);
-        Array dataTypesArray = mock(Array.class);
-        
-        when(fileColumnsArray.getArray()).thenReturn(new String[]{"col1", "col2"});
-        when(requiredColumnsArray.getArray()).thenReturn(new String[]{"col1"});
-        when(dbColumnsArray.getArray()).thenReturn(new String[]{"col1", "col2", "col3"});
-        when(dataTypesArray.getArray()).thenReturn(new String[]{"String", "Integer"});
-
-        // Configure mock behavior
-        config.put("FILE_COLUMNS", fileColumnsArray);
-        config.put("REQUIRED_COLUMNS", requiredColumnsArray);
-        config.put("DB_COLUMNS", dbColumnsArray);
-        config.put("DATATYPES", dataTypesArray);
+        config.put("FILE_COLUMNS", new String[] {"col1", "col2"});
+        config.put("REQUIRED_COLUMNS", new String[] {"col1"});
+        config.put("DB_COLUMNS", new String[] {"db_col1", "db_col2"});
+        config.put("DATATYPES", new String[] {"String", "Integer"});
 
         when(configAccess.dao(tableName, configId)).thenReturn(config);
-        when(jdbcTemplate.execute(anyString())).thenReturn(null);
+        when(jdbcTemplate.execute(anyString())).thenReturn(true);
+        when(Files.lines(any(Path.class))).thenReturn(java.util.stream.Stream.of("line1", "line2"));
 
-        // Act
         JobParameters jobParameters = jobParam.setJobParam(tableName, configId);
-
-        // Assert
         assertNotNull(jobParameters);
-        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
-        verify(jdbcTemplate, times(1)).execute("SELECT 1 FROM destination_table WHERE 1 = 0");
+        assertEquals(filePath, jobParameters.getString("filePath"));
     }
-    
-    // Add additional test methods...
-}
+
     @Test
-    void testSetJobParam_TableDoesNotExist() {
-        // Arrange
-        String tableName = "non_existent_table";
-        String configId = "123";
+    void testSetJobParamFileConfigTableNotExist() {
+        String tableName = "file_config";
+        String configId = "1";
 
-        // Mocking behavior
-        doThrow(new SQLException()).when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
+        doThrow(new RuntimeException("Table not found")).when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
 
-        // Act & Assert
-        Exception exception = assertThrows(Exception.class, () -> jobParam.setJobParam(tableName, configId));
+        Exception exception = assertThrows(Exception.class, () -> {
+            jobParam.setJobParam(tableName, configId);
+        });
+
         assertEquals("File Configuration table doesn't exist", exception.getMessage());
     }
 
     @Test
-    void testSetJobParam_InvalidSkipAppend() {
-        // Arrange
-        String tableName = "file_config_table";
-        String configId = "123";
+    void testSetJobParamDestTableNotExist() {
+        String tableName = "file_config";
+        String configId = "1";
+        String destTable = "dest_table";
+
+        ConfigAccess configAccess = mock(ConfigAccess.class);
         Map<String, Object> config = new HashMap<>();
-        config.put("FILEPATH", "/path/to/file");
-        config.put("DELIMITER", ",");
-        config.put("DEST_TABLE", "destination_table");
-        config.put("lines_to_skip", 0);
-        config.put("SKIP_EXCEPTION", "INVALID"); // Invalid value
-        config.put("APPEND_DATA", "N");
+        config.put("DEST_TABLE", destTable);
 
-        // Mocking behavior
         when(configAccess.dao(tableName, configId)).thenReturn(config);
-        when(jdbcTemplate.execute(anyString())).thenReturn(null);
+        when(jdbcTemplate.execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0")).thenReturn(true);
+        doThrow(new RuntimeException("Table not found")).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
 
-        // Act & Assert
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> jobParam.setJobParam(tableName, configId));
-        assertEquals("Invalid skip value: INVALID", exception.getMessage());
+        Exception exception = assertThrows(Exception.class, () -> {
+            jobParam.setJobParam(tableName, configId);
+        });
+
+        assertEquals("Destination table doesn't exist in database", exception.getMessage());
     }
-    
-    // Add more test cases for different scenarios as needed...
+
+    @Test
+    void testValidateSkipAppendInvalidSkip() {
+        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
+            JobParam.validateSkipAppend("invalid", "Y");
+        });
+
+        assertEquals("Invalid skip value: invalid", exception.getMessage());
+    }
+
+    @Test
+    void testValidateSkipAppendInvalidAppend() {
+        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
+            JobParam.validateSkipAppend("Y", "invalid");
+        });
+
+        assertEquals("Invalid append value: invalid", exception.getMessage());
+    }
+
+    @Test
+    void testValidateDataTypesInvalidDataType() {
+        Exception exception = assertThrows(IllegalArgumentException.class, () -> {
+            JobParam.validateDataTypes(new Object[] {"String", "InvalidType"});
+        });
+
+        assertEquals("Invalid data type: InvalidType", exception.getMessage());
+    }
 }
