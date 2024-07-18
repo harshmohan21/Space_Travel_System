@@ -1,69 +1,85 @@
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Map;
-
-import org.junit.jupiter.api.BeforeEach;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.item.file.FlatFileItemReader;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.jdbc.core.JdbcTemplate;
 
-@ExtendWith(MockitoExtension.class)
-class BatchConfigTest {
+public class UnescapeStringTest {
 
-    @Mock
-    private JobRepository jobRepository;
-
-    @Mock
-    private DataSourceTransactionManager transactionManager;
-
-    @Mock
-    private ItemReader<Map<String, Object>> reader;
-
-    @Mock
-    private ItemProcessor<Map<String, Object>, Map<String, Object>> processor;
-
-    @Mock
-    private ItemWriter<Map<String, Object>> writer;
-
-    @Mock
-    private DataSource dataSource;
-
-    @Mock
-    private JdbcTemplate jdbcTemplate;
-
-    @Mock
-    private TaskExecutor taskExecutor;
-
-    @InjectMocks
-    private BatchConfig batchConfig;
-
-    private Path tempFilePath;
-
-    @BeforeEach
-    void setUp() throws Exception {
-        tempFilePath = Files.createTempFile("test-file", ".csv");
-        Files.write(tempFilePath, "col1,col2\nvalue1,value2".getBytes());
+    @Test
+    public void testUnescapeString_withTab() {
+        String input = "Hello\\tWorld";
+        String expected = "Hello\tWorld";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
     }
 
     @Test
-    void testReader() throws Exception {
-        String filePath = tempFilePath.toString();
-        FlatFileItemReader<Map<String, Object>> reader = batchConfig.reader(filePath, ",", "col1,col2", "col1,col2", "String,String", 1L);
-        assertNotNull(reader);
+    public void testUnescapeString_withNewline() {
+        String input = "Hello\\nWorld";
+        String expected = "Hello\nWorld";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
     }
 
-    // other test cases
+    @Test
+    public void testUnescapeString_withCarriageReturn() {
+        String input = "Hello\\rWorld";
+        String expected = "Hello\rWorld";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
+    }
 
-    @AfterEach
-    void tearDown() throws Exception {
-        Files.deleteIfExists(tempFilePath);
+    @Test
+    public void testUnescapeString_withBackspace() {
+        String input = "Hello\\bWorld";
+        String expected = "Hello\bWorld";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testUnescapeString_withFormFeed() {
+        String input = "Hello\\fWorld";
+        String expected = "Hello\fWorld";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testUnescapeString_withBackslash() {
+        String input = "Hello\\\\World";
+        String expected = "Hello\\World";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testUnescapeString_withDoubleQuote() {
+        String input = "Hello\\\"World";
+        String expected = "Hello\"World";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testUnescapeString_withSingleQuote() {
+        String input = "Hello\\'World";
+        String expected = "Hello'World";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testUnescapeString_withMixedEscapes() {
+        String input = "Hello\\tWorld\\nNew\\rLine\\bBack\\fForm\\\"Quote\\'Single\\\\" + "End";
+        String expected = "Hello\tWorld\nNew\rLine\bBack\fForm\"Quote'Single\\End";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testUnescapeString_withoutEscapes() {
+        String input = "Hello World";
+        String expected = "Hello World";
+        String actual = UnescapeString.unescapeString(input);
+        assertEquals(expected, actual);
     }
 }
