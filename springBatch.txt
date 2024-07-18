@@ -1,26 +1,27 @@
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.powermock.api.mockito.PowerMockito;
+import org.powermock.core.classloader.annotations.PrepareForTest;
+import org.powermock.modules.junit4.PowerMockRunner;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.core.JobLauncher;
 import org.springframework.batch.core.JobParameters;
-import org.springframework.boot.SpringApplication;
-import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.context.WebApplicationContext;
+import org.springframework.boot.SpringApplication;
 
-@SpringJUnitConfig
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
+
+@RunWith(PowerMockRunner.class)
+@PrepareForTest({Controller.class, ConfigAccess.class, JobParam.class, FileConfigTable.class, InsertUpdateDeleteRecord.class, SpringApplication.class})
 public class ControllerTest {
 
     @Mock
@@ -38,71 +39,70 @@ public class ControllerTest {
     @InjectMocks
     private Controller controller;
 
-    @BeforeEach
+    @Before
     public void setUp() {
-        MockitoAnnotations.openMocks(this);
+        MockitoAnnotations.initMocks(this);
+        PowerMockito.mockStatic(SpringApplication.class);
     }
 
     @Test
-    public void testHandle() throws Exception {
-        // Arrange
-        String tableName = "testTable";
-        String configId = "testConfigId";
-        ConfigAccess configAccess = mock(ConfigAccess.class);
-        JobParam jobParam = mock(JobParam.class);
-        JobParameters jobParameters = new JobParameters();
+    public void testHandleJobLaunch() throws Exception {
+        // Mock behavior for JobLauncher and Job
         JobExecution jobExecution = mock(JobExecution.class);
+        when(jobLauncher.run(eq(job), any(JobParameters.class))).thenReturn(jobExecution);
 
-        when(jdbcTemplate.queryForObject(any(String.class), any(Class.class))).thenReturn(configAccess);
-        when(jobParam.setJobParam(tableName, configId)).thenReturn(jobParameters);
-        when(jobLauncher.run(job, jobParameters)).thenReturn(jobExecution);
+        // Mock behavior for ConfigAccess
+        ConfigAccess configAccessMock = mock(ConfigAccess.class);
+        PowerMockito.whenNew(ConfigAccess.class).withArguments(any(JdbcTemplate.class)).thenReturn(configAccessMock);
 
-        // Act
-        controller.handle(tableName, configId);
+        // Mock behavior for JobParam
+        JobParameters jobParametersMock = mock(JobParameters.class);
+        JobParam jobParamMock = mock(JobParam.class);
+        PowerMockito.whenNew(JobParam.class).withArguments(any(JdbcTemplate.class), any(ConfigAccess.class)).thenReturn(jobParamMock);
+        when(jobParamMock.setJobParam(anyString(), anyString())).thenReturn(jobParametersMock);
 
-        // Assert
-        verify(jobLauncher, times(1)).run(job, jobParameters);
+        // Call the controller method
+        controller.handle("tableName", "configId");
+
+        // Verify that jobLauncher.run was called once
+        verify(jobLauncher, times(1)).run(eq(job), any(JobParameters.class));
     }
 
     @Test
-    public void testStop() throws Exception {
-        // Arrange
-        ConfigurableApplicationContext context = mock(ConfigurableApplicationContext.class);
-        when(webApplicationContext.getParent()).thenReturn(context);
+    public void testStopApplication() throws Exception {
+        // Mock behavior for SpringApplication.exit
+        when(SpringApplication.exit(any(WebApplicationContext.class), any())).thenReturn(0);
 
-        doNothing().when(context).close();
-
-        // Act
+        // Call the controller method
         controller.stop();
 
-        // Assert
-        verify(webApplicationContext, times(1)).getParent();
-        verify(context, times(1)).close();
+        // Verify that SpringApplication.exit was called once
+        verify(SpringApplication.class, times(1)).exit(eq(webApplicationContext), any());
     }
 
     @Test
     public void testCreateFileConfigTable() throws Exception {
-        // Arrange
-        String tableName = "testTable";
-        FileConfigTable fileConfigTable = mock(FileConfigTable.class);
+        // Mock behavior for FileConfigTable
+        FileConfigTable fileConfigTableMock = mock(FileConfigTable.class);
+        PowerMockito.whenNew(FileConfigTable.class).withArguments(any(JdbcTemplate.class)).thenReturn(fileConfigTableMock);
 
-        // Act
-        controller.createFileConfigTable(tableName);
+        // Call the controller method
+        controller.CreateFileConfigTable("tableName");
 
-        // Assert
-        verify(fileConfigTable, times(1)).configTable(tableName);
+        // Verify that FileConfigTable.configTable(tableName) was called once
+        verify(fileConfigTableMock, times(1)).configTable("tableName");
     }
 
     @Test
-    public void testInsertConfig() throws Exception {
-        // Arrange
-        String sql = "INSERT INTO testTable (id, name) VALUES (1, 'testName')";
-        InsertUpdateDeleteRecord record = mock(InsertUpdateDeleteRecord.class);
+    public void testInsertUpdateDeleteConfig() throws Exception {
+        // Mock behavior for InsertUpdateDeleteRecord
+        InsertUpdateDeleteRecord recordMock = mock(InsertUpdateDeleteRecord.class);
+        PowerMockito.whenNew(InsertUpdateDeleteRecord.class).withArguments(any(JdbcTemplate.class)).thenReturn(recordMock);
 
-        // Act
-        controller.insertConfig(sql);
+        // Call the controller method
+        controller.insertConfig("INSERT INTO table VALUES (1, 'value')");
 
-        // Assert
-        verify(record, times(1)).execute(sql);
+        // Verify that InsertUpdateDeleteRecord.execute(sql) was called once
+        verify(recordMock, times(1)).execute("INSERT INTO table VALUES (1, 'value')");
     }
 }
