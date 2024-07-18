@@ -71,18 +71,30 @@ class JobParamTest {
         assertEquals("File Configuration table doesn't exist", exception.getMessage());
     }
 
-    @Test
+@Test
     void testSetJobParamDestTableNotExist() {
         String tableName = "file_config";
         String configId = "1";
         String destTable = "dest_table";
+        String filePath = "src/test/resources/testfile.csv";
 
-        ConfigAccess configAccess = mock(ConfigAccess.class);
+        // Mocking the configAccess to return a valid configuration
         Map<String, Object> config = new HashMap<>();
+        config.put("FILEPATH", filePath);
+        config.put("DELIMITER", ",");
         config.put("DEST_TABLE", destTable);
+        config.put("lines_to_skip", 1);
+        config.put("SKIP_EXCEPTION", "Y");
+        config.put("APPEND_DATA", "N");
+        config.put("FILE_COLUMNS", new String[] {"col1", "col2"});
+        config.put("REQUIRED_COLUMNS", new String[] {"col1"});
+        config.put("DB_COLUMNS", new String[] {"db_col1", "db_col2"});
+        config.put("DATATYPES", new String[] {"String", "Integer"});
 
         when(configAccess.dao(tableName, configId)).thenReturn(config);
-        when(jdbcTemplate.execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0")).thenReturn(true);
+
+        // Mocking JdbcTemplate to simulate table existence check
+        doNothing().when(jdbcTemplate).execute("SELECT 1 FROM " + tableName + " WHERE 1 = 0");
         doThrow(new RuntimeException("Table not found")).when(jdbcTemplate).execute("SELECT 1 FROM " + destTable + " WHERE 1 = 0");
 
         Exception exception = assertThrows(Exception.class, () -> {
@@ -91,6 +103,7 @@ class JobParamTest {
 
         assertEquals("Destination table doesn't exist in database", exception.getMessage());
     }
+
 
     @Test
     void testValidateSkipAppendInvalidSkip() {
