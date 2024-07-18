@@ -148,6 +148,12 @@ class JobParamTest {
 
 
 <dependency>
+    <groupId>org.mockito</groupId>
+    <artifactId>mockito-core</artifactId>
+    <version>3.9.0</version>
+    <scope>test</scope>
+</dependency>
+<dependency>
     <groupId>org.powermock</groupId>
     <artifactId>powermock-module-junit4</artifactId>
     <version>2.0.9</version>
@@ -166,3 +172,38 @@ class JobParamTest {
     <scope>test</scope>
 </dependency>
 
+@Test
+    void testSetJobParamSuccess() throws Exception {
+        String tableName = "file_config";
+        String configId = "1";
+        String destTable = "dest_table";
+        String filePath = "src/test/resources/testfile.csv";
+        
+        Map<String, Object> config = new HashMap<>();
+        config.put("FILEPATH", filePath);
+        config.put("DELIMITER", ",");
+        config.put("DEST_TABLE", destTable);
+        config.put("lines_to_skip", 1);
+        config.put("SKIP_EXCEPTION", "Y");
+        config.put("APPEND_DATA", "N");
+        config.put("FILE_COLUMNS", new String[] {"col1", "col2"});
+        config.put("REQUIRED_COLUMNS", new String[] {"col1"});
+        config.put("DB_COLUMNS", new String[] {"db_col1", "db_col2"});
+        config.put("DATATYPES", new String[] {"String", "Integer"});
+
+        when(configAccess.dao(tableName, configId)).thenReturn(config);
+        doNothing().when(jdbcTemplate).execute(anyString());
+
+        // Mock the static Paths.get method
+        Path mockPath = mock(Path.class);
+        PowerMockito.mockStatic(Paths.class);
+        PowerMockito.when(Paths.get(filePath)).thenReturn(mockPath);
+
+        // Mock the Files.lines method
+        PowerMockito.mockStatic(Files.class);
+        when(Files.lines(mockPath)).thenReturn(java.util.stream.Stream.of("line1", "line2"));
+
+        JobParameters jobParameters = jobParam.setJobParam(tableName, configId);
+        assertNotNull(jobParameters);
+        assertEquals(filePath, jobParameters.getString("filePath"));
+    }
