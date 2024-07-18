@@ -35,7 +35,6 @@ class JobParamTest {
         String destTable = "dest_table";
         String filePath = "src/test/resources/testfile.csv";
         
-        ConfigAccess configAccess = mock(ConfigAccess.class);
         Map<String, Object> config = new HashMap<>();
         config.put("FILEPATH", filePath);
         config.put("DELIMITER", ",");
@@ -49,8 +48,16 @@ class JobParamTest {
         config.put("DATATYPES", new String[] {"String", "Integer"});
 
         when(configAccess.dao(tableName, configId)).thenReturn(config);
-        when(jdbcTemplate.execute(anyString())).thenReturn(true);
-        when(Files.lines(any(Path.class))).thenReturn(java.util.stream.Stream.of("line1", "line2"));
+        doNothing().when(jdbcTemplate).execute(anyString());
+
+        // Mock the static Paths.get method
+        Path mockPath = mock(Path.class);
+        PowerMockito.mockStatic(Paths.class);
+        PowerMockito.when(Paths.get(filePath)).thenReturn(mockPath);
+
+        // Mock the Files.lines method
+        PowerMockito.mockStatic(Files.class);
+        when(Files.lines(mockPath)).thenReturn(java.util.stream.Stream.of("line1", "line2"));
 
         JobParameters jobParameters = jobParam.setJobParam(tableName, configId);
         assertNotNull(jobParameters);
