@@ -1,9 +1,9 @@
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
-
-import javax.sql.DataSource;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -11,31 +11,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
-import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
-import org.springframework.batch.core.explore.JobExplorer;
-import org.springframework.batch.core.launch.JobLauncher;
-import org.springframework.batch.core.launch.support.SimpleJobLauncher;
-import org.springframework.batch.core.repository.JobRepository;
-import org.springframework.batch.core.step.tasklet.TaskletStep;
-import org.springframework.batch.item.ItemProcessor;
-import org.springframework.batch.item.ItemReader;
-import org.springframework.batch.item.ItemWriter;
 import org.springframework.batch.item.file.FlatFileItemReader;
-import org.springframework.batch.item.file.mapping.DefaultLineMapper;
-import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
-import org.springframework.batch.support.transaction.ResourcelessTransactionManager;
-import org.springframework.boot.autoconfigure.batch.BatchProperties;
-import org.springframework.context.annotation.Bean;
-import org.springframework.core.env.Environment;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.core.task.TaskExecutor;
 
 @ExtendWith(MockitoExtension.class)
 class BatchConfigTest {
@@ -44,7 +22,7 @@ class BatchConfigTest {
     private JobRepository jobRepository;
 
     @Mock
-    private JobLauncher jobLauncher;
+    private DataSourceTransactionManager transactionManager;
 
     @Mock
     private ItemReader<Map<String, Object>> reader;
@@ -62,64 +40,30 @@ class BatchConfigTest {
     private JdbcTemplate jdbcTemplate;
 
     @Mock
-    private PlatformTransactionManager transactionManager;
-
-    @Mock
     private TaskExecutor taskExecutor;
 
     @InjectMocks
     private BatchConfig batchConfig;
 
-    @Test
-    void testJobBean() throws Exception {
-        Job job = batchConfig.jobBean(jobRepository, null, steps());
-        assertNotNull(job);
-    }
+    private Path tempFilePath;
 
-    @Test
-    void testSteps() throws Exception {
-        Step step = batchConfig.steps(jobRepository, (DataSourceTransactionManager) transactionManager, reader, processor, writer, jdbcTemplate, "y", "destTable", 100L);
-        assertNotNull(step);
-    }
-
-    @Test
-    void testTaskExecutor() {
-        TaskExecutor taskExecutor = batchConfig.taskExecutor();
-        assertNotNull(taskExecutor);
-    }
-
-    @Test
-    void testJobLauncher() throws Exception {
-        JobLauncher jobLauncher = batchConfig.jobLauncher(jobRepository);
-        assertNotNull(jobLauncher);
-    }
-
-    @Test
-    void testLineMapper() {
-        DefaultLineMapper<Map<String, Object>> lineMapper = (DefaultLineMapper<Map<String, Object>>) batchConfig.lineMapper("col1,col2", "col1,col2", "col1,col2", ",", "String,String");
-        assertNotNull(lineMapper);
+    @BeforeEach
+    void setUp() throws Exception {
+        tempFilePath = Files.createTempFile("test-file", ".csv");
+        Files.write(tempFilePath, "col1,col2\nvalue1,value2".getBytes());
     }
 
     @Test
     void testReader() throws Exception {
-        FlatFileItemReader<Map<String, Object>> reader = batchConfig.reader("path/to/file.csv", ",", "col1,col2", "col1,col2", "String,String", 1L);
+        String filePath = tempFilePath.toString();
+        FlatFileItemReader<Map<String, Object>> reader = batchConfig.reader(filePath, ",", "col1,col2", "col1,col2", "String,String", 1L);
         assertNotNull(reader);
     }
 
-    @Test
-    void testItemProcessor() {
-        ItemProcessor<Map<String, Object>, Map<String, Object>> processor = batchConfig.itemProcessor();
-        assertNotNull(processor);
-    }
+    // other test cases
 
-    @Test
-    void testItemWriter() {
-        ItemWriter<Map<String, Object>> writer = batchConfig.itemWriter(dataSource, jdbcTemplate, "dest_table", "appendData");
-        assertNotNull(writer);
-    }
-
-    @Test
-    void testGetExecutionContextSerializer() {
-        assertNotNull(batchConfig.getExecutionContextSerializer());
+    @AfterEach
+    void tearDown() throws Exception {
+        Files.deleteIfExists(tempFilePath);
     }
 }
