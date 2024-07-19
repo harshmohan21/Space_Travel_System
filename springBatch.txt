@@ -121,3 +121,33 @@ class ReadValveTestClass {
         }
     }
 }
+
+
+
+
+private Object readValve(FieldSet fieldSet, String column, String columnType) { 
+    try {
+        switch (columnType.toLowerCase()) { // Convert columnType to lowercase for case-insensitive comparison
+            case "integer":
+                return fieldSet.readInt(column);
+            case "double":
+                return fieldSet.readDouble(column);
+            case "date":
+                return fieldSet.readDate(column);
+            case "time":
+                return Time.valueOf(fieldSet.readString(column));
+            case "timestamp":
+                return Timestamp.valueOf(fieldSet.readString(column));
+            case "char":
+                String value = fieldSet.readString(column);
+                return value != null && !value.isEmpty() ? value.charAt(0) : null;
+            case "string":
+            default:
+                return fieldSet.readString(column);
+        }
+    } catch (Exception e) {
+        // Handle the exception appropriately
+        e.printStackTrace();
+        return null;
+    }
+}
