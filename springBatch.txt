@@ -1,85 +1,123 @@
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.when;
+
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.batch.item.file.transform.FieldSet;
 
-public class UnescapeStringTest {
+public class ReadValveTest {
 
-    @Test
-    public void testUnescapeString_withTab() {
-        String input = "Hello\\tWorld";
-        String expected = "Hello\tWorld";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
+    @Mock
+    private FieldSet fieldSet;
+
+    @InjectMocks
+    private ReadValveTestClass readValveTestClass;
+
+    @BeforeEach
+    public void setUp() {
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    public void testUnescapeString_withNewline() {
-        String input = "Hello\\nWorld";
-        String expected = "Hello\nWorld";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
+    public void testReadValve_withInteger() {
+        when(fieldSet.readInt("column")).thenReturn(123);
+
+        Object result = readValveTestClass.readValve(fieldSet, "column", "integer");
+        assertEquals(123, result);
     }
 
     @Test
-    public void testUnescapeString_withCarriageReturn() {
-        String input = "Hello\\rWorld";
-        String expected = "Hello\rWorld";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
+    public void testReadValve_withDouble() {
+        when(fieldSet.readDouble("column")).thenReturn(123.45);
+
+        Object result = readValveTestClass.readValve(fieldSet, "column", "double");
+        assertEquals(123.45, result);
     }
 
     @Test
-    public void testUnescapeString_withBackspace() {
-        String input = "Hello\\bWorld";
-        String expected = "Hello\bWorld";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
+    public void testReadValve_withDate() throws Exception {
+        Date date = new SimpleDateFormat("yyyy-MM-dd").parse("2024-07-18");
+        when(fieldSet.readDate("column")).thenReturn(date);
+
+        Object result = readValveTestClass.readValve(fieldSet, "column", "date");
+        assertEquals(date, result);
     }
 
     @Test
-    public void testUnescapeString_withFormFeed() {
-        String input = "Hello\\fWorld";
-        String expected = "Hello\fWorld";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
+    public void testReadValve_withTime() {
+        Time time = Time.valueOf("12:34:56");
+        when(fieldSet.readString("column")).thenReturn("12:34:56");
+
+        Object result = readValveTestClass.readValve(fieldSet, "column", "time");
+        assertEquals(time, result);
     }
 
     @Test
-    public void testUnescapeString_withBackslash() {
-        String input = "Hello\\\\World";
-        String expected = "Hello\\World";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
+    public void testReadValve_withTimestamp() {
+        Timestamp timestamp = Timestamp.valueOf("2024-07-18 12:34:56");
+        when(fieldSet.readString("column")).thenReturn("2024-07-18 12:34:56");
+
+        Object result = readValveTestClass.readValve(fieldSet, "column", "timestamp");
+        assertEquals(timestamp, result);
     }
 
     @Test
-    public void testUnescapeString_withDoubleQuote() {
-        String input = "Hello\\\"World";
-        String expected = "Hello\"World";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
+    public void testReadValve_withChar() {
+        when(fieldSet.readString("column")).thenReturn("c");
+
+        Object result = readValveTestClass.readValve(fieldSet, "column", "char");
+        assertEquals('c', result);
     }
 
     @Test
-    public void testUnescapeString_withSingleQuote() {
-        String input = "Hello\\'World";
-        String expected = "Hello'World";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
+    public void testReadValve_withString() {
+        when(fieldSet.readString("column")).thenReturn("test");
+
+        Object result = readValveTestClass.readValve(fieldSet, "column", "string");
+        assertEquals("test", result);
     }
 
     @Test
-    public void testUnescapeString_withMixedEscapes() {
-        String input = "Hello\\tWorld\\nNew\\rLine\\bBack\\fForm\\\"Quote\\'Single\\\\" + "End";
-        String expected = "Hello\tWorld\nNew\rLine\bBack\fForm\"Quote'Single\\End";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
-    }
+    public void testReadValve_withInvalidChar() {
+        when(fieldSet.readString("column")).thenReturn("");
 
-    @Test
-    public void testUnescapeString_withoutEscapes() {
-        String input = "Hello World";
-        String expected = "Hello World";
-        String actual = UnescapeString.unescapeString(input);
-        assertEquals(expected, actual);
+        Object result = readValveTestClass.readValve(fieldSet, "column", "char");
+        assertEquals(null, result);
+    }
+}
+
+class ReadValveTestClass {
+    public Object readValve(FieldSet fieldSet, String column, String columnType) {
+        try {
+            switch (columnType.toLowerCase()) {
+                case "integer":
+                    return fieldSet.readInt(column);
+                case "double":
+                    return fieldSet.readDouble(column);
+                case "date":
+                    return fieldSet.readDate(column);
+                case "time":
+                    return Time.valueOf(fieldSet.readString(column));
+                case "timestamp":
+                    return Timestamp.valueOf(fieldSet.readString(column));
+                case "char":
+                    String value = fieldSet.readString(column);
+                    return value != null && !value.isEmpty() ? value.charAt(0) : null;
+                case "string":
+                default:
+                    return fieldSet.readString(column);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
     }
 }
